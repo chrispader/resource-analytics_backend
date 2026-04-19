@@ -1,3 +1,5 @@
+from config import API_URL
+
 import random
 from fastapi import FastAPI, Query, Path, Body, Request, HTTPException, UploadFile, File, Cookie, Depends
 from fastapi.responses import JSONResponse, FileResponse
@@ -32,7 +34,9 @@ TEST_FILE="hardcoded/PurchasingExamplePseudo.csv"
 for filename in os.listdir(FILES_DIR):
     os.remove(f"{FILES_DIR}/{filename}")
 
-app = FastAPI()
+app = FastAPI(
+    servers=[{"url": API_URL, "description": "Configured API base URL"}],
+)
 
 app.add_middleware(
     CORSMiddleware,
