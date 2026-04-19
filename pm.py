@@ -15,6 +15,7 @@ import base64
 from io import BytesIO
 
 from pydantic import BaseModel
+from typing import Any
 
 class OutputModel(BaseModel):
     table: list[dict]
@@ -23,6 +24,9 @@ class OutputModel(BaseModel):
     plot: str | None = None
     big_plot: str | None = None
     process_model: str | None = None
+    nodes: list[dict[str, Any]] | None = None
+    edges: list[dict[str, Any]] | None = None
+    metrics: dict[str, Any] | None = None
 
 class AnalysisFilterModel(BaseModel):
     metric: list[str]
@@ -415,6 +419,190 @@ def resource_roles(df):
     plot = fig.to_json()
 
     return OutputModel(table=resource_role_df.to_dict(orient="records"), plot=plot)
+
+
+def _resource_role_matrix_colorscale(n_roles: int, palette: list[str]) -> list[list]:
+    """Piecewise scale for z in 0..n_roles: 0 = empty cell, k>0 = role column color."""
+    light_gray = "#ededed"
+    if n_roles <= 0:
+        return [[0, light_gray], [1, light_gray]]
+
+    scale: list[list] = [[0, light_gray], [0.5 / n_roles, light_gray]]
+    for k in range(1, n_roles + 1):
+        color = palette[(k - 1) % len(palette)]
+        t_mid = (k - 0.5) / n_roles
+        t_end = k / n_roles
+        scale.append([t_mid, color])
+        scale.append([t_end, color])
+    if scale[-1][0] < 1.0:
+        scale.append([1.0, palette[(n_roles - 1) % len(palette)]])
+    return scale
+
+
+def resource_role_matrix(df):
+    """
+    Resource×Role assignment matrix (heatmap), Role–Activity edges, and summary metrics
+    for organizational mining style views.
+    """
+    assignments = df[["Resource", "Role"]].dropna().drop_duplicates()
+    roles_sorted = sorted(df["Role"].dropna().unique().tolist())
+    n_roles = len(roles_sorted)
+
+    all_resources = sorted(df["Resource"].dropna().unique().tolist())
+    role_lists_by_resource = (
+        assignments.groupby("Resource")["Role"]
+        .agg(lambda s: sorted(s.unique().tolist()))
+        if not assignments.empty
+        else pd.Series(dtype=object)
+    )
+
+    roles_per_resource_rows = []
+    for resource in all_resources:
+        if resource in role_lists_by_resource.index:
+            role_list = role_lists_by_resource[resource]
+            if not isinstance(role_list, list):
+                role_list = [role_list]
+        else:
+            role_list = []
+        roles_per_resource_rows.append(
+            {
+                "Resource": resource,
+                "Number of Roles": len(role_list),
+                "Roles": role_list,
+            }
+        )
+
+    meta = pd.DataFrame(roles_per_resource_rows)
+    if meta.empty:
+        meta = pd.DataFrame(columns=["Resource", "Number of Roles", "Roles"])
+    else:
+        meta["roles_key"] = meta["Roles"].apply(lambda r: tuple(r))
+        meta = meta.sort_values(
+            by=["Number of Roles", "roles_key", "Resource"],
+            ascending=[False, True, True],
+        )
+    resources_sorted = meta["Resource"].tolist() if not meta.empty else []
+
+    role_to_col = {role: j for j, role in enumerate(roles_sorted)}
+    n_res = len(resources_sorted)
+    z = [[0 for _ in range(n_roles)] for _ in range(n_res)]
+    hover = [["" for _ in range(n_roles)] for _ in range(n_res)]
+
+    res_index = {r: i for i, r in enumerate(resources_sorted)}
+    for _, row in assignments.iterrows():
+        resource = row["Resource"]
+        role = row["Role"]
+        if resource not in res_index or role not in role_to_col:
+            continue
+        i = res_index[resource]
+        j = role_to_col[role]
+        z[i][j] = j + 1
+        hover[i][j] = f"Resource: {resource}<br>Role: {role}"
+
+    resources_per_role_counts = (
+        assignments.groupby("Role")["Resource"].nunique().astype(int).to_dict()
+    )
+    roles_per_resource_counts = (
+        assignments.groupby("Resource")["Role"].nunique().astype(int).to_dict()
+    )
+    total_assignments = int(len(assignments))
+
+    nodes: list[dict[str, Any]] = []
+    for r in resources_sorted:
+        nodes.append({"id": f"res:{r}", "label": r, "kind": "resource"})
+    for role in roles_sorted:
+        nodes.append({"id": f"role:{role}", "label": role, "kind": "role"})
+    for activity in sorted(df["Activity"].dropna().unique().tolist()):
+        nodes.append({"id": f"act:{activity}", "label": activity, "kind": "activity"})
+
+    edges_rr: list[dict[str, Any]] = []
+    for _, row in assignments.iterrows():
+        resource = row["Resource"]
+        role = row["Role"]
+        edges_rr.append(
+            {
+                "source": f"res:{resource}",
+                "target": f"role:{role}",
+                "kind": "resource_role",
+            }
+        )
+
+    role_activity = df[["Role", "Activity"]].drop_duplicates()
+    edges_ra: list[dict[str, Any]] = []
+    for _, row in role_activity.iterrows():
+        role = row["Role"]
+        activity = row["Activity"]
+        edges_ra.append(
+            {
+                "source": f"role:{role}",
+                "target": f"act:{activity}",
+                "kind": "role_activity",
+            }
+        )
+
+    edges = edges_rr + edges_ra
+
+    metrics: dict[str, Any] = {
+        "total_assignments": total_assignments,
+        "resources_per_role": resources_per_role_counts,
+        "roles_per_resource": roles_per_resource_counts,
+    }
+
+    row_height_px = 14
+    plot_height = max(400, min(2400, n_res * row_height_px + 120))
+
+    if n_roles == 0 or n_res == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title={"text": "Resource × Role matrix", "x": 0.5, "xanchor": "center"},
+            plot_bgcolor="white",
+            annotations=[
+                {
+                    "text": "No Resource–Role assignments in the filtered log.",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "x": 0.5,
+                    "y": 0.5,
+                    "showarrow": False,
+                }
+            ],
+        )
+    else:
+        colorscale = _resource_role_matrix_colorscale(n_roles, custom_palette_1)
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=z,
+                x=roles_sorted,
+                y=resources_sorted,
+                text=hover,
+                hoverinfo="text",
+                colorscale=colorscale,
+                zmin=0,
+                zmax=n_roles,
+                showscale=False,
+                xgap=2,
+                ygap=2,
+            )
+        )
+        fig.update_layout(
+            title={"text": "Resource × Role matrix", "x": 0.5, "xanchor": "center"},
+            xaxis=dict(title="Role", side="bottom"),
+            yaxis=dict(title="Resource", autorange="reversed"),
+            height=plot_height,
+            plot_bgcolor="white",
+        )
+
+    plot = fig.to_json()
+    table_records = meta.drop(columns=["roles_key"], errors="ignore").to_dict(orient="records")
+
+    return OutputModel(
+        table=table_records,
+        plot=plot,
+        nodes=nodes,
+        edges=edges,
+        metrics=metrics,
+    )
+
 
 #TODO: remove and replace by resource_within_role_normalization
 def resource_role_average_duration(df, time_unit: str ='minutes', normalize: bool = True):
