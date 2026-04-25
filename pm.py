@@ -580,17 +580,23 @@ def resource_role_matrix(df):
         side_bar_gray = "#4a4a4a"
         # Bar strip is ~1/9 of the heatmap width; uniform bar height (thickness) for every resource
         bar_y_width = 0.7
-        # Top row: heatmap + per-resource count bars; bottom row: column totals (same level) + grand total
+        # 3 columns: [dedicated label cell | heatmap | bars] so "Total number of roles" is a trace, not layout.annotation
+        label_col = 0.12
+        bar_col = 0.08
+        mid_col = 1.0 - label_col - bar_col
         fig = make_subplots(
             rows=2,
-            cols=2,
+            cols=3,
             row_heights=[0.83, 0.11],
-            column_widths=[10 / 11, 1 / 11],
+            column_widths=[label_col, mid_col, bar_col],
             vertical_spacing=0.006,
             horizontal_spacing=0.01,
-            subplot_titles=("", "Number of roles<br>per resource", "", ""),
-            specs=[[{}, {}], [{}, {}]],
+            subplot_titles=("", "", "Number of roles<br>per resource", "", "", ""),
+            specs=[[{}, {}, {}], [{}, {}, {}]],
         )
+        # (1,1) empty spacer; label lives only in (2,1) under the resource-name margin column
+        fig.update_xaxes(visible=False, range=[0, 1], showticklabels=False, row=1, col=1)
+        fig.update_yaxes(visible=False, range=[0, 1], showticklabels=False, row=1, col=1)
 
         fig.add_trace(
             go.Heatmap(
@@ -608,7 +614,7 @@ def resource_role_matrix(df):
                 ygap=2,
             ),
             row=1,
-            col=1,
+            col=2,
         )
         fig.add_trace(
             go.Bar(
@@ -625,12 +631,11 @@ def resource_role_matrix(df):
                 hovertemplate="Resource: %{y}<br>Number of roles: %{x}<extra></extra>",
             ),
             row=1,
-            col=2,
+            col=3,
         )
         per_role_hover = [
             f"Role: {r}<br>Total number of resources: {c}" for r, c in zip(roles_sorted, per_role_count)
         ]
-        # Totals sit near the top of the bottom strip (y≈+0.2) so they sit just under the matrix
         count_row_y = 0.2
         fig.add_trace(
             go.Scatter(
@@ -645,9 +650,8 @@ def resource_role_matrix(df):
                 hoverinfo="text",
             ),
             row=2,
-            col=1,
+            col=2,
         )
-        # Grand total as text only, same vertical level as the per-role column counts
         fig.add_trace(
             go.Scatter(
                 x=[0.5],
@@ -661,7 +665,22 @@ def resource_role_matrix(df):
                 hoverinfo="text",
             ),
             row=2,
-            col=2,
+            col=3,
+        )
+        # Own subplot: not coupled to heatmap / annotation layer
+        fig.add_trace(
+            go.Scatter(
+                x=[0.5],
+                y=[0.5],
+                mode="text",
+                text=["Total number<br>of roles"],
+                textposition="middle center",
+                textfont=dict(size=11, color="#333333"),
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=2,
+            col=1,
         )
 
         for j, role in enumerate(roles_sorted):
@@ -677,10 +696,9 @@ def resource_role_matrix(df):
                     visible="legendonly",
                 ),
                 row=1,
-                col=1,
+                col=2,
             )
 
-        # Matrix + count row: no role tick labels (legend is enough for column / color meaning)
         fig.update_xaxes(
             type="category",
             categoryorder="array",
@@ -690,9 +708,8 @@ def resource_role_matrix(df):
             title_text="",
             automargin=True,
             row=1,
-            col=1,
+            col=2,
         )
-        # Bar lengths only; no numeric tick line under the chart (0,1,2,…)
         fig.update_xaxes(
             title_text="",
             range=[0, bar_axis_max],
@@ -700,7 +717,7 @@ def resource_role_matrix(df):
             showgrid=False,
             zeroline=False,
             row=1,
-            col=2,
+            col=3,
         )
         fig.update_xaxes(
             type="category",
@@ -711,27 +728,17 @@ def resource_role_matrix(df):
             title_text="",
             automargin=True,
             row=2,
-            col=1,
+            col=2,
         )
-        # Totals cell: one centered number, y matched to the column-total row
         fig.update_xaxes(
             visible=False,
             range=[0, 1],
             showticklabels=False,
             row=2,
-            col=2,
+            col=3,
         )
-        fig.update_yaxes(
-            showticklabels=False,
-            showgrid=False,
-            zeroline=False,
-            range=[-0.3, 0.3],
-            matches="y3",
-            row=2,
-            col=2,
-        )
+        fig.update_xaxes(visible=False, range=[0, 1], showticklabels=False, row=2, col=1)
 
-        # Wider space for resource names (l= margin) — no “Resource” header
         fig.update_yaxes(
             title_text="",
             type="category",
@@ -740,7 +747,7 @@ def resource_role_matrix(df):
             autorange="reversed",
             automargin=True,
             row=1,
-            col=1,
+            col=2,
         )
         fig.update_yaxes(
             type="category",
@@ -751,22 +758,33 @@ def resource_role_matrix(df):
             showgrid=True,
             gridcolor="#eeeeee",
             row=1,
-            col=2,
+            col=3,
         )
-        # Count row: y range fits text near top of cell (closer to heatmap)
+        # (1,3) y matches (1,2) — axis names: row1 col2 → y2, col3 → y3
+        fig.update_yaxes(row=1, col=3, matches="y2")
         fig.update_yaxes(
             title_text="",
-            side="left",
             showticklabels=False,
             showgrid=False,
             zeroline=False,
             range=[-0.3, 0.3],
             automargin=True,
             row=2,
-            col=1,
+            col=2,
         )
+        fig.update_yaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            range=[-0.3, 0.3],
+            matches="y5",
+            row=2,
+            col=3,
+        )
+        # Label cell: neutral box, text centered
+        fig.update_yaxes(visible=False, range=[0, 1], showticklabels=False, row=2, col=1)
 
-        # Margins: generous padding; slightly smaller title y so the chart sits lower and breathing room
+        # Margins: label column is inside the grid, so a normal l= margin is enough
         fig.update_layout(
             title={
                 "text": "Resource × Role matrix",
@@ -777,7 +795,7 @@ def resource_role_matrix(df):
             },
             height=plot_height,
             plot_bgcolor="white",
-            margin=dict(t=120, b=100, l=150, r=100),
+            margin=dict(t=120, b=100, l=100, r=100),
             legend=dict(
                 title=dict(text="Role"),
                 orientation="h",
@@ -787,25 +805,14 @@ def resource_role_matrix(df):
                 x=0.5,
             ),
         )
-        # Match right panel subplot title to the Total label (11px, muted)
         if fig.layout.annotations:
             for i, ann in enumerate(fig.layout.annotations):
                 ann_text = getattr(ann, "text", None) or ""
                 if "Number of roles" in str(ann_text) and "per resource" in str(ann_text):
                     fig.layout.annotations[i].update(font=dict(size=11, color="#333333"))
 
-        # Left margin only (under resource name column, not over role columns); y aligns with count_row_y
-        fig.add_annotation(
-            text="Total number<br>of roles",
-            font=dict(size=11, color="#333333"),
-            showarrow=False,
-            xref="paper",
-            x=0.055,
-            yref="y3",
-            y=count_row_y,
-            xanchor="left",
-            yanchor="middle",
-        )
+        # Count row x under heatmap
+        fig.update_xaxes(row=2, col=2, matches="x2")
 
     plot = fig.to_json()
     table_records = meta.drop(columns=["roles_key"], errors="ignore").to_dict(orient="records")
