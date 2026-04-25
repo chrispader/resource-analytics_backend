@@ -580,24 +580,49 @@ def resource_role_matrix(df):
         side_bar_gray = "#4a4a4a"
         # Bar strip is ~1/9 of the heatmap width; uniform bar height (thickness) for every resource
         bar_y_width = 0.7
-        # 3 columns: [label cell | heatmap | bars] — col1 only as wide as needed for labels (narrower)
-        label_col = 0.15
+        # 3 columns: [label | heatmap | bars]
+        # Paper-width fraction: scale with longest resource id (two-line “Total number …” is ~18+ chars at this font).
+        max_resource_label_len = max((len(str(r)) for r in resources_sorted), default=0)
+        min_chars_for_label_strip = 18
+        label_col = min(
+            0.16,
+            max(
+                0.09,
+                0.0065
+                * (max(min_chars_for_label_strip, max_resource_label_len + 8)),
+            ),
+        )
         bar_col = 0.08
         mid_col = 1.0 - label_col - bar_col
-        # Tight gap between the matrix row and the per-role counts below (slight spacing only)
-        count_matrix_vertical_gap = 0.0015
+        # As tight as make_subplots allows so the count row sits immediately under the matrix
+        count_matrix_vertical_gap = 0.0
+        # Narrow y-band for the count row: less empty padding in that small horizontal strip
+        count_row_y = 0.2
+        count_row_y_min, count_row_y_max = 0.14, 0.28
+        # At least this many layout pixels for the first column: label_col * width
+        rrm_min_plot_width = 1024
         fig = make_subplots(
             rows=2,
             cols=3,
-            row_heights=[0.86, 0.10],
+            row_heights=[0.88, 0.09],
             column_widths=[label_col, mid_col, bar_col],
             vertical_spacing=count_matrix_vertical_gap,
-            horizontal_spacing=0.01,
+            # 0: no extra gutter between label | heatmap | bar columns (scaleanchor on y2 also caused inner margins)
+            horizontal_spacing=0.0,
             subplot_titles=("", "", "Number of roles<br>per resource", "", "", ""),
             specs=[[{}, {}, {}], [{}, {}, {}]],
         )
-        # (1,1) row labels as text (left-aligned in column 1); (2,1) = “Total number of roles”
-        fig.update_xaxes(visible=False, range=[0, 1], showticklabels=False, row=1, col=1)
+        # (1,1) label column: lock x so reset/autoscale in the client can’t pick a “zoomed” x-range
+        fig.update_xaxes(
+            visible=False,
+            range=[0, 1],
+            showticklabels=False,
+            automargin=False,
+            autorange=False,
+            fixedrange=True,
+            row=1,
+            col=1,
+        )
 
         fig.add_trace(
             go.Heatmap(
@@ -634,14 +659,15 @@ def resource_role_matrix(df):
             row=1,
             col=3,
         )
-        # Left column: one anchor per resource at x=0, text extends to the right (left-aligned in the column)
+        # Left column: anchor at the right edge of the cell so text sits next to the matrix (not in wide empty col1)
+        label_anchor_x = 0.99
         fig.add_trace(
             go.Scatter(
-                x=[0.0] * len(resources_sorted),
+                x=[label_anchor_x] * len(resources_sorted),
                 y=resources_sorted,
                 mode="text",
                 text=resources_sorted,
-                textposition="middle right",
+                textposition="middle left",
                 textfont=dict(size=10, color="#333333"),
                 cliponaxis=False,
                 showlegend=False,
@@ -653,7 +679,6 @@ def resource_role_matrix(df):
         per_role_hover = [
             f"Role: {r}<br>Total number of resources: {c}" for r, c in zip(roles_sorted, per_role_count)
         ]
-        count_row_y = 0.2
         fig.add_trace(
             go.Scatter(
                 x=roles_sorted,
@@ -684,15 +709,15 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # Same y as the per-role count row (2,2) so this line up vertically with the numbers
         fig.add_trace(
             go.Scatter(
-                x=[0.0],
+                x=[label_anchor_x],
                 y=[count_row_y],
                 mode="text",
                 text=["Total number<br>of roles"],
-                textposition="middle right",
+                textposition="middle left",
                 textfont=dict(size=11, color="#333333"),
+                cliponaxis=False,
                 showlegend=False,
                 hoverinfo="skip",
             ),
@@ -723,7 +748,7 @@ def resource_role_matrix(df):
             showticklabels=False,
             showgrid=False,
             title_text="",
-            automargin=True,
+            automargin=False,
             row=1,
             col=2,
         )
@@ -733,6 +758,7 @@ def resource_role_matrix(df):
             showticklabels=False,
             showgrid=False,
             zeroline=False,
+            automargin=False,
             row=1,
             col=3,
         )
@@ -743,7 +769,7 @@ def resource_role_matrix(df):
             showticklabels=False,
             showgrid=False,
             title_text="",
-            automargin=True,
+            automargin=False,
             row=2,
             col=2,
         )
@@ -751,10 +777,20 @@ def resource_role_matrix(df):
             visible=False,
             range=[0, 1],
             showticklabels=False,
+            automargin=False,
             row=2,
             col=3,
         )
-        fig.update_xaxes(visible=False, range=[0, 1], showticklabels=False, row=2, col=1)
+        fig.update_xaxes(
+            visible=False,
+            range=[0, 1],
+            showticklabels=False,
+            automargin=False,
+            autorange=False,
+            fixedrange=True,
+            row=2,
+            col=1,
+        )
 
         fig.update_yaxes(
             title_text="",
@@ -763,7 +799,7 @@ def resource_role_matrix(df):
             categoryarray=resources_sorted,
             autorange="reversed",
             showticklabels=False,
-            automargin=True,
+            automargin=False,
             row=1,
             col=2,
         )
@@ -775,6 +811,7 @@ def resource_role_matrix(df):
             showticklabels=False,
             showgrid=True,
             gridcolor="#eeeeee",
+            automargin=False,
             row=1,
             col=3,
         )
@@ -784,19 +821,22 @@ def resource_role_matrix(df):
             showticklabels=False,
             showline=False,
             showgrid=False,
-            automargin=True,
+            automargin=False,
             row=1,
             col=1,
         )
         # (1,3) y matches (1,2) — axis names: row1 col2 → y2, col3 → y3
         fig.update_yaxes(row=1, col=3, matches="y2")
+        # Lock the count-row y so double-click/reset in the client can’t expand a padded y-range
         fig.update_yaxes(
             title_text="",
             showticklabels=False,
             showgrid=False,
             zeroline=False,
-            range=[-0.3, 0.3],
-            automargin=True,
+            range=[count_row_y_min, count_row_y_max],
+            automargin=False,
+            autorange=False,
+            fixedrange=True,
             row=2,
             col=2,
         )
@@ -804,7 +844,8 @@ def resource_role_matrix(df):
             showticklabels=False,
             showgrid=False,
             zeroline=False,
-            range=[-0.3, 0.3],
+            automargin=False,
+            fixedrange=True,
             matches="y5",
             row=2,
             col=3,
@@ -814,12 +855,15 @@ def resource_role_matrix(df):
             showticklabels=False,
             showline=False,
             showgrid=False,
+            automargin=False,
+            fixedrange=True,
             matches="y5",
             row=2,
             col=1,
         )
 
-        # Margins: label column is inside the grid, so a normal l= margin is enough
+        # Margins + width: fixed width gives a floor for label column pixels; uirevision reduces surprise relayouts
+        rrm_width = max(rrm_min_plot_width, int(plot_height * 0.5))
         fig.update_layout(
             title={
                 "text": "Resource × Role matrix",
@@ -828,6 +872,8 @@ def resource_role_matrix(df):
                 "y": 0.97,
                 "yanchor": "top",
             },
+            uirevision="resource_role_matrix",
+            width=rrm_width,
             height=plot_height,
             plot_bgcolor="white",
             margin=dict(t=120, b=100, l=100, r=100),
@@ -851,6 +897,18 @@ def resource_role_matrix(df):
 
         # Count row x under heatmap
         fig.update_xaxes(row=2, col=2, matches="x2")
+        # Spell out domain on every cartesian axis so the subplot grid is explicit in the JSON output
+        layout_dict = fig.to_dict().get("layout") or {}
+        for axis_name, axis_obj in layout_dict.items():
+            if not (axis_name.startswith("xaxis") or axis_name.startswith("yaxis")):
+                continue
+            if not isinstance(axis_obj, dict):
+                continue
+            dom = axis_obj.get("domain")
+            if dom is not None and len(dom) == 2:
+                fig.update_layout(
+                    {axis_name: {"domain": [float(dom[0]), float(dom[1])]}}
+                )
 
     plot = fig.to_json()
     table_records = meta.drop(columns=["roles_key"], errors="ignore").to_dict(orient="records")
