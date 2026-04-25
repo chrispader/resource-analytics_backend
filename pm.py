@@ -549,8 +549,9 @@ def resource_role_matrix(df):
     }
 
     row_height_px = 14
-    base_h = n_res * row_height_px + 120
-    plot_height = max(480, min(2600, base_h + 200))
+    base_h = n_res * row_height_px
+    # Extra room for top titles, bottom count row, legend, and diagram controls (plotly default-like margins)
+    plot_height = max(480, min(2600, base_h + 280))
 
     if n_roles == 0 or n_res == 0:
         fig = go.Figure()
@@ -574,17 +575,21 @@ def resource_role_matrix(df):
         per_role_count = [int(resources_per_role_counts.get(r, 0)) for r in roles_sorted]
         roles_count_per_res = [int(roles_per_resource_counts.get(r, 0)) for r in resources_sorted]
         max_role_count = max(roles_count_per_res) if roles_count_per_res else 1
-        bar_axis_max = max(max_role_count * 1.15, 1.0)
-        col_bar_max = max(max(per_role_count) * 1.2, 1) if per_role_count else 1
+        bar_axis_max = max(max_role_count * 1.12, 1.0)
         side_bar_gray = "#4a4a4a"
-        # Row 1: heatmap + "number of roles per resource" as horizontal bars; row 2: column totals + grand total; legend is separate traces.
+        # Thickness of each horizontal bar scales with the count (category-axis width, orientation=h)
+        bar_thicknesses = [
+            0.35 + 0.6 * (c / max_role_count) if max_role_count else 0.65 for c in roles_count_per_res
+        ]
+        # Top row: heatmap + per-resource count bars; bottom row: text counts under matrix columns, grand total
         fig = make_subplots(
             rows=2,
             cols=2,
-            row_heights=[0.74, 0.22],
+            row_heights=[0.84, 0.12],
             column_widths=[0.70, 0.30],
-            vertical_spacing=0.10,
-            horizontal_spacing=0.02,
+            vertical_spacing=0.03,
+            horizontal_spacing=0.002,
+            subplot_titles=("", "Number of roles per resource", "", ""),
             specs=[[{}, {}], [{"type": "xy"}, {"type": "domain"}]],
         )
 
@@ -611,6 +616,7 @@ def resource_role_matrix(df):
                 x=roles_count_per_res,
                 y=resources_sorted,
                 orientation="h",
+                width=bar_thicknesses,
                 marker=dict(color=side_bar_gray, line=dict(width=0)),
                 text=[str(c) for c in roles_count_per_res],
                 textposition="outside",
@@ -622,17 +628,20 @@ def resource_role_matrix(df):
             row=1,
             col=2,
         )
-        col_marker_colors = [palette[i % len(palette)] for i in range(n_roles)]
+        per_role_hover = [
+            f"Role: {r}<br>Total unique resources: {c}" for r, c in zip(roles_sorted, per_role_count)
+        ]
         fig.add_trace(
-            go.Bar(
+            go.Scatter(
                 x=roles_sorted,
-                y=per_role_count,
-                marker=dict(color=col_marker_colors, line=dict(width=0)),
+                y=[0.0] * n_roles,
+                mode="text",
                 text=[str(c) for c in per_role_count],
-                textposition="outside",
-                textfont=dict(size=10),
+                textfont=dict(size=11, color="#333333"),
+                textposition="middle center",
                 showlegend=False,
-                hovertemplate="Role: %{x}<br>Resources: %{y}<extra></extra>",
+                hovertext=per_role_hover,
+                hoverinfo="text",
             ),
             row=2,
             col=1,
@@ -664,22 +673,33 @@ def resource_role_matrix(df):
                 col=1,
             )
 
+        # Shared column-1 x keeps counts aligned under each matrix column
         fig.update_xaxes(
-            title_text="Role",
             type="category",
+            categoryorder="array",
+            categoryarray=roles_sorted,
+            title_text="Role",
+            showticklabels=True,
+            tickangle=-40 if n_roles > 4 else 0,
+            automargin=True,
             row=1,
             col=1,
         )
         fig.update_xaxes(
             title_text="Number of roles per resource",
             range=[0, bar_axis_max],
+            showgrid=True,
+            gridcolor="#eeeeee",
             row=1,
             col=2,
         )
         fig.update_xaxes(
-            title_text="Role",
             type="category",
-            tickangle=-40 if n_roles > 4 else 0,
+            categoryorder="array",
+            categoryarray=roles_sorted,
+            showticklabels=False,
+            showgrid=False,
+            title_text="Total unique resources (column total)",
             automargin=True,
             row=2,
             col=1,
@@ -702,26 +722,38 @@ def resource_role_matrix(df):
             categoryarray=resources_sorted,
             autorange="reversed",
             showticklabels=False,
+            showgrid=True,
+            gridcolor="#eeeeee",
             row=1,
             col=2,
         )
+        # Numbers only, no y scale bar
         fig.update_yaxes(
-            title_text="Resources (total per role)",
-            range=[0, col_bar_max],
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            range=[-0.4, 0.4],
             row=2,
             col=1,
         )
 
+        # Margins: match typical bar/heatmap figures so toolbar controls do not sit on the plot
         fig.update_layout(
-            title={"text": "Resource × Role matrix", "x": 0.5, "xanchor": "center", "y": 0.98},
+            title={
+                "text": "Resource × Role matrix",
+                "x": 0.5,
+                "xanchor": "center",
+                "y": 0.9,
+                "yanchor": "top",
+            },
             height=plot_height,
             plot_bgcolor="white",
-            margin=dict(t=50, b=110, l=0, r=0),
+            margin=dict(t=100, b=100, l=80, r=80),
             legend=dict(
                 title=dict(text="Role"),
                 orientation="h",
                 yanchor="top",
-                y=-0.14,
+                y=-0.12,
                 xanchor="center",
                 x=0.5,
             ),
