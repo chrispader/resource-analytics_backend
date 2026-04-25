@@ -584,9 +584,9 @@ def resource_role_matrix(df):
         fig = make_subplots(
             rows=2,
             cols=2,
-            row_heights=[0.80, 0.14],
+            row_heights=[0.83, 0.11],
             column_widths=[10 / 11, 1 / 11],
-            vertical_spacing=0.02,
+            vertical_spacing=0.006,
             horizontal_spacing=0.01,
             subplot_titles=("", "Number of roles<br>per resource", "", ""),
             specs=[[{}, {}], [{}, {}]],
@@ -630,10 +630,12 @@ def resource_role_matrix(df):
         per_role_hover = [
             f"Role: {r}<br>Total number of resources: {c}" for r, c in zip(roles_sorted, per_role_count)
         ]
+        # Totals sit near the top of the bottom strip (y≈+0.2) so they sit just under the matrix
+        count_row_y = 0.2
         fig.add_trace(
             go.Scatter(
                 x=roles_sorted,
-                y=[0.0] * n_roles,
+                y=[count_row_y] * n_roles,
                 mode="text",
                 text=[str(c) for c in per_role_count],
                 textfont=dict(size=11, color="#333333"),
@@ -649,7 +651,7 @@ def resource_role_matrix(df):
         fig.add_trace(
             go.Scatter(
                 x=[0.5],
-                y=[0.0],
+                y=[count_row_y],
                 mode="text",
                 text=[str(total_assignments)],
                 textposition="middle center",
@@ -723,7 +725,7 @@ def resource_role_matrix(df):
             showticklabels=False,
             showgrid=False,
             zeroline=False,
-            range=[-0.4, 0.4],
+            range=[-0.3, 0.3],
             matches="y3",
             row=2,
             col=2,
@@ -751,14 +753,14 @@ def resource_role_matrix(df):
             row=1,
             col=2,
         )
-        # Count row: no rotated axis title; horizontal two-line label added below as annotation
+        # Count row: y range fits text near top of cell (closer to heatmap)
         fig.update_yaxes(
             title_text="",
             side="left",
             showticklabels=False,
             showgrid=False,
             zeroline=False,
-            range=[-0.4, 0.4],
+            range=[-0.3, 0.3],
             automargin=True,
             row=2,
             col=1,
@@ -785,15 +787,22 @@ def resource_role_matrix(df):
                 x=0.5,
             ),
         )
-        # Two-line label left of the totals row (paper coords; plot area is roughly y 0.12–0.9)
+        # Match right panel subplot title to the Total label (11px, muted)
+        if fig.layout.annotations:
+            for i, ann in enumerate(fig.layout.annotations):
+                ann_text = getattr(ann, "text", None) or ""
+                if "Number of roles" in str(ann_text) and "per resource" in str(ann_text):
+                    fig.layout.annotations[i].update(font=dict(size=11, color="#333333"))
+
+        # Left margin only (under resource name column, not over role columns); y aligns with count_row_y
         fig.add_annotation(
             text="Total number<br>of roles",
-            font=dict(size=11),
+            font=dict(size=11, color="#333333"),
             showarrow=False,
             xref="paper",
-            yref="paper",
-            x=0.02,
-            y=0.16,
+            x=0.055,
+            yref="y3",
+            y=count_row_y,
             xanchor="left",
             yanchor="middle",
         )
