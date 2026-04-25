@@ -598,15 +598,18 @@ def resource_role_matrix(df):
         count_matrix_vertical_gap = 0.0
         # Slight breathing room between label | heatmap | bar columns (Plotly: fraction of total width)
         rrm_column_gutter = 0.004
-        # Narrow y-band for the count row: less empty padding in that small horizontal strip
+        # Count row: match strip height to ~one text line (11px) + padding; cap ratio so short figures stay readable
         count_row_y = 0.2
-        count_row_y_min, count_row_y_max = 0.14, 0.28
+        count_row_y_min, count_row_y_max = 0.17, 0.23
+        count_row_strip_px = 42
+        count_row_h_ratio = min(0.08, max(0.02, count_row_strip_px / float(plot_height)))
+        top_row_h_ratio = 1.0 - count_row_h_ratio
         # At least this many layout pixels for the first column: label_col * width
         rrm_min_plot_width = 1024
         fig = make_subplots(
             rows=2,
             cols=3,
-            row_heights=[0.88, 0.09],
+            row_heights=[top_row_h_ratio, count_row_h_ratio],
             column_widths=[label_col, mid_col, bar_col],
             vertical_spacing=count_matrix_vertical_gap,
             horizontal_spacing=rrm_column_gutter,
