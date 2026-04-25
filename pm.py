@@ -594,9 +594,8 @@ def resource_role_matrix(df):
             subplot_titles=("", "", "Number of roles<br>per resource", "", "", ""),
             specs=[[{}, {}, {}], [{}, {}, {}]],
         )
-        # (1,1) empty spacer; label lives only in (2,1) under the resource-name margin column
+        # (1,1) row labels as text (left-aligned in column 1); (2,1) = “Total number of roles”
         fig.update_xaxes(visible=False, range=[0, 1], showticklabels=False, row=1, col=1)
-        fig.update_yaxes(visible=False, range=[0, 1], showticklabels=False, row=1, col=1)
 
         fig.add_trace(
             go.Heatmap(
@@ -633,6 +632,22 @@ def resource_role_matrix(df):
             row=1,
             col=3,
         )
+        # Left column: one anchor per resource at x=0, text extends to the right (left-aligned in the column)
+        fig.add_trace(
+            go.Scatter(
+                x=[0.0] * len(resources_sorted),
+                y=resources_sorted,
+                mode="text",
+                text=resources_sorted,
+                textposition="middle right",
+                textfont=dict(size=10, color="#333333"),
+                cliponaxis=False,
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )
         per_role_hover = [
             f"Role: {r}<br>Total number of resources: {c}" for r, c in zip(roles_sorted, per_role_count)
         ]
@@ -667,14 +682,14 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # Own subplot (col 1): text centered in that column’s cell — not hugging the far edge
+        # Same column: anchor at the left, text to the right of the point (left-aligned in the cell)
         fig.add_trace(
             go.Scatter(
-                x=[0.5],
+                x=[0.0],
                 y=[0.5],
                 mode="text",
                 text=["Total number<br>of roles"],
-                textposition="middle center",
+                textposition="middle right",
                 textfont=dict(size=11, color="#333333"),
                 showlegend=False,
                 hoverinfo="skip",
@@ -745,6 +760,7 @@ def resource_role_matrix(df):
             categoryorder="array",
             categoryarray=resources_sorted,
             autorange="reversed",
+            showticklabels=False,
             automargin=True,
             row=1,
             col=2,
@@ -759,6 +775,16 @@ def resource_role_matrix(df):
             gridcolor="#eeeeee",
             row=1,
             col=3,
+        )
+        # (1,1) shares y with heatmap + bars; tick labels are the text trace above, not axis ticks
+        fig.update_yaxes(
+            matches="y2",
+            showticklabels=False,
+            showline=False,
+            showgrid=False,
+            automargin=True,
+            row=1,
+            col=1,
         )
         # (1,3) y matches (1,2) — axis names: row1 col2 → y2, col3 → y3
         fig.update_yaxes(row=1, col=3, matches="y2")
@@ -781,7 +807,7 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # Label cell: flat [0,1]×[0,1], text centered in the wider column
+        # (2,1) flat domain for the total-label trace (x is 0–1 in the cell)
         fig.update_yaxes(visible=False, range=[0, 1], showticklabels=False, row=2, col=1)
 
         # Margins: label column is inside the grid, so a normal l= margin is enough
