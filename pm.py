@@ -596,6 +596,8 @@ def resource_role_matrix(df):
         mid_col = 1.0 - label_col - bar_col
         # As tight as make_subplots allows so the count row sits immediately under the matrix
         count_matrix_vertical_gap = 0.0
+        # Slight breathing room between label | heatmap | bar columns (Plotly: fraction of total width)
+        rrm_column_gutter = 0.004
         # Narrow y-band for the count row: less empty padding in that small horizontal strip
         count_row_y = 0.2
         count_row_y_min, count_row_y_max = 0.14, 0.28
@@ -607,8 +609,7 @@ def resource_role_matrix(df):
             row_heights=[0.88, 0.09],
             column_widths=[label_col, mid_col, bar_col],
             vertical_spacing=count_matrix_vertical_gap,
-            # 0: no extra gutter between label | heatmap | bar columns (scaleanchor on y2 also caused inner margins)
-            horizontal_spacing=0.0,
+            horizontal_spacing=rrm_column_gutter,
             subplot_titles=("", "", "Number of roles<br>per resource", "", "", ""),
             specs=[[{}, {}, {}], [{}, {}, {}]],
         )
