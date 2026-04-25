@@ -580,8 +580,8 @@ def resource_role_matrix(df):
         side_bar_gray = "#4a4a4a"
         # Bar strip is ~1/9 of the heatmap width; uniform bar height (thickness) for every resource
         bar_y_width = 0.7
-        # 3 columns: [dedicated label cell | heatmap | bars] so "Total number of roles" is a trace, not layout.annotation
-        label_col = 0.12
+        # 3 columns: [dedicated label cell | heatmap | bars] — wider col1 so “Total number of roles” fits comfortably
+        label_col = 0.21
         bar_col = 0.08
         mid_col = 1.0 - label_col - bar_col
         fig = make_subplots(
@@ -667,7 +667,7 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # Own subplot: not coupled to heatmap / annotation layer
+        # Own subplot (col 1): text centered in that column’s cell — not hugging the far edge
         fig.add_trace(
             go.Scatter(
                 x=[0.5],
@@ -781,7 +781,7 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # Label cell: neutral box, text centered
+        # Label cell: flat [0,1]×[0,1], text centered in the wider column
         fig.update_yaxes(visible=False, range=[0, 1], showticklabels=False, row=2, col=1)
 
         # Margins: label column is inside the grid, so a normal l= margin is enough
