@@ -580,16 +580,18 @@ def resource_role_matrix(df):
         side_bar_gray = "#4a4a4a"
         # Bar strip is ~1/9 of the heatmap width; uniform bar height (thickness) for every resource
         bar_y_width = 0.7
-        # 3 columns: [dedicated label cell | heatmap | bars] — wider col1 so “Total number of roles” fits comfortably
-        label_col = 0.21
+        # 3 columns: [label cell | heatmap | bars] — col1 only as wide as needed for labels (narrower)
+        label_col = 0.15
         bar_col = 0.08
         mid_col = 1.0 - label_col - bar_col
+        # Tight gap between the matrix row and the per-role counts below (slight spacing only)
+        count_matrix_vertical_gap = 0.0015
         fig = make_subplots(
             rows=2,
             cols=3,
-            row_heights=[0.83, 0.11],
+            row_heights=[0.86, 0.10],
             column_widths=[label_col, mid_col, bar_col],
-            vertical_spacing=0.006,
+            vertical_spacing=count_matrix_vertical_gap,
             horizontal_spacing=0.01,
             subplot_titles=("", "", "Number of roles<br>per resource", "", "", ""),
             specs=[[{}, {}, {}], [{}, {}, {}]],
@@ -682,11 +684,11 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # Same column: anchor at the left, text to the right of the point (left-aligned in the cell)
+        # Same y as the per-role count row (2,2) so this line up vertically with the numbers
         fig.add_trace(
             go.Scatter(
                 x=[0.0],
-                y=[0.5],
+                y=[count_row_y],
                 mode="text",
                 text=["Total number<br>of roles"],
                 textposition="middle right",
@@ -807,8 +809,15 @@ def resource_role_matrix(df):
             row=2,
             col=3,
         )
-        # (2,1) flat domain for the total-label trace (x is 0–1 in the cell)
-        fig.update_yaxes(visible=False, range=[0, 1], showticklabels=False, row=2, col=1)
+        # (2,1) shares the count row y-scale with (2,2)/(2,3) so the label and counts align
+        fig.update_yaxes(
+            showticklabels=False,
+            showline=False,
+            showgrid=False,
+            matches="y5",
+            row=2,
+            col=1,
+        )
 
         # Margins: label column is inside the grid, so a normal l= margin is enough
         fig.update_layout(
@@ -835,7 +844,10 @@ def resource_role_matrix(df):
             for i, ann in enumerate(fig.layout.annotations):
                 ann_text = getattr(ann, "text", None) or ""
                 if "Number of roles" in str(ann_text) and "per resource" in str(ann_text):
-                    fig.layout.annotations[i].update(font=dict(size=11, color="#333333"))
+                    fig.layout.annotations[i].update(
+                        font=dict(size=11, color="#333333"),
+                        yshift=-10,
+                    )
 
         # Count row x under heatmap
         fig.update_xaxes(row=2, col=2, matches="x2")
