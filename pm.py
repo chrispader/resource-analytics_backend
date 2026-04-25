@@ -549,7 +549,8 @@ def resource_role_matrix(df):
     }
 
     row_height_px = 14
-    plot_height = max(400, min(2400, n_res * row_height_px + 120))
+    base_h = n_res * row_height_px + 120
+    plot_height = max(480, min(2600, base_h + 200))
 
     if n_roles == 0 or n_res == 0:
         fig = go.Figure()
@@ -569,8 +570,26 @@ def resource_role_matrix(df):
         )
     else:
         colorscale = _resource_role_matrix_colorscale(n_roles, custom_palette_1)
-        fig = go.Figure(
-            data=go.Heatmap(
+        palette = custom_palette_1
+        per_role_count = [int(resources_per_role_counts.get(r, 0)) for r in roles_sorted]
+        roles_count_per_res = [int(roles_per_resource_counts.get(r, 0)) for r in resources_sorted]
+        max_role_count = max(roles_count_per_res) if roles_count_per_res else 1
+        bar_axis_max = max(max_role_count * 1.15, 1.0)
+        col_bar_max = max(max(per_role_count) * 1.2, 1) if per_role_count else 1
+        side_bar_gray = "#4a4a4a"
+        # Row 1: heatmap + "number of roles per resource" as horizontal bars; row 2: column totals + grand total; legend is separate traces.
+        fig = make_subplots(
+            rows=2,
+            cols=2,
+            row_heights=[0.74, 0.22],
+            column_widths=[0.70, 0.30],
+            vertical_spacing=0.10,
+            horizontal_spacing=0.02,
+            specs=[[{}, {}], [{"type": "xy"}, {"type": "domain"}]],
+        )
+
+        fig.add_trace(
+            go.Heatmap(
                 z=z,
                 x=roles_sorted,
                 y=resources_sorted,
@@ -580,16 +599,132 @@ def resource_role_matrix(df):
                 zmin=0,
                 zmax=n_roles,
                 showscale=False,
+                showlegend=False,
                 xgap=2,
                 ygap=2,
-            )
+            ),
+            row=1,
+            col=1,
         )
+        fig.add_trace(
+            go.Bar(
+                x=roles_count_per_res,
+                y=resources_sorted,
+                orientation="h",
+                marker=dict(color=side_bar_gray, line=dict(width=0)),
+                text=[str(c) for c in roles_count_per_res],
+                textposition="outside",
+                textfont=dict(size=10, color=side_bar_gray),
+                cliponaxis=False,
+                showlegend=False,
+                hovertemplate="Resource: %{y}<br>Number of roles: %{x}<extra></extra>",
+            ),
+            row=1,
+            col=2,
+        )
+        col_marker_colors = [palette[i % len(palette)] for i in range(n_roles)]
+        fig.add_trace(
+            go.Bar(
+                x=roles_sorted,
+                y=per_role_count,
+                marker=dict(color=col_marker_colors, line=dict(width=0)),
+                text=[str(c) for c in per_role_count],
+                textposition="outside",
+                textfont=dict(size=10),
+                showlegend=False,
+                hovertemplate="Role: %{x}<br>Resources: %{y}<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
+        fig.add_trace(
+            go.Indicator(
+                mode="number",
+                value=total_assignments,
+                number=dict(font=dict(size=28), valueformat="d"),
+                title=dict(text="Total role<br>assignments", font=dict(size=12)),
+            ),
+            row=2,
+            col=2,
+        )
+
+        for j, role in enumerate(roles_sorted):
+            color = palette[j % len(palette)]
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    name=role,
+                    marker=dict(size=12, color=color, symbol="square"),
+                    showlegend=True,
+                    visible="legendonly",
+                ),
+                row=1,
+                col=1,
+            )
+
+        fig.update_xaxes(
+            title_text="Role",
+            type="category",
+            row=1,
+            col=1,
+        )
+        fig.update_xaxes(
+            title_text="Number of roles per resource",
+            range=[0, bar_axis_max],
+            row=1,
+            col=2,
+        )
+        fig.update_xaxes(
+            title_text="Role",
+            type="category",
+            tickangle=-40 if n_roles > 4 else 0,
+            automargin=True,
+            row=2,
+            col=1,
+        )
+        fig.update_xaxes(visible=False, row=2, col=2)
+        fig.update_yaxes(visible=False, row=2, col=2)
+
+        fig.update_yaxes(
+            title_text="Resource",
+            type="category",
+            categoryorder="array",
+            categoryarray=resources_sorted,
+            autorange="reversed",
+            row=1,
+            col=1,
+        )
+        fig.update_yaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=resources_sorted,
+            autorange="reversed",
+            showticklabels=False,
+            row=1,
+            col=2,
+        )
+        fig.update_yaxes(
+            title_text="Resources (total per role)",
+            range=[0, col_bar_max],
+            row=2,
+            col=1,
+        )
+
         fig.update_layout(
-            title={"text": "Resource × Role matrix", "x": 0.5, "xanchor": "center"},
-            xaxis=dict(title="Role", side="bottom"),
-            yaxis=dict(title="Resource", autorange="reversed"),
+            title={"text": "Resource × Role matrix", "x": 0.5, "xanchor": "center", "y": 0.98},
             height=plot_height,
             plot_bgcolor="white",
+            margin=dict(t=50, b=110, l=0, r=0),
+            legend=dict(
+                title=dict(text="Role"),
+                orientation="h",
+                yanchor="top",
+                y=-0.14,
+                xanchor="center",
+                x=0.5,
+            ),
         )
 
     plot = fig.to_json()
