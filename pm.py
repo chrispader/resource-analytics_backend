@@ -580,16 +580,16 @@ def resource_role_matrix(df):
         side_bar_gray = "#4a4a4a"
         # Bar strip is ~1/9 of the heatmap width; uniform bar height (thickness) for every resource
         bar_y_width = 0.7
-        # Top row: heatmap + per-resource count bars; bottom row: text counts under matrix, grand total
+        # Top row: heatmap + per-resource count bars; bottom row: column totals (same level) + grand total
         fig = make_subplots(
             rows=2,
             cols=2,
-            row_heights=[0.84, 0.12],
+            row_heights=[0.80, 0.14],
             column_widths=[10 / 11, 1 / 11],
-            vertical_spacing=0.04,
+            vertical_spacing=0.02,
             horizontal_spacing=0.01,
-            subplot_titles=("", "Number of roles per resource", "", ""),
-            specs=[[{}, {}], [{"type": "xy"}, {"type": "domain"}]],
+            subplot_titles=("", "Number of roles<br>per resource", "", ""),
+            specs=[[{}, {}], [{}, {}]],
         )
 
         fig.add_trace(
@@ -645,14 +645,18 @@ def resource_role_matrix(df):
             row=2,
             col=1,
         )
+        # Grand total as text only, same vertical level as the per-role column counts
         fig.add_trace(
-            go.Indicator(
-                mode="number",
-                value=total_assignments,
-                number=dict(font=dict(size=20), valueformat="d"),
-                title=dict(
-                    text="Total role<br>assignments", font=dict(size=10)
-                ),
+            go.Scatter(
+                x=[0.5],
+                y=[0.0],
+                mode="text",
+                text=[str(total_assignments)],
+                textposition="middle center",
+                textfont=dict(size=11, color="#333333"),
+                showlegend=False,
+                hovertext=f"All roles: {total_assignments} assignments (resource–role links)",
+                hoverinfo="text",
             ),
             row=2,
             col=2,
@@ -686,12 +690,13 @@ def resource_role_matrix(df):
             row=1,
             col=1,
         )
-        # Only the right subplot title names this axis; do not repeat as x title
+        # Bar lengths only; no numeric tick line under the chart (0,1,2,…)
         fig.update_xaxes(
             title_text="",
             range=[0, bar_axis_max],
-            showgrid=True,
-            gridcolor="#eeeeee",
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
             row=1,
             col=2,
         )
@@ -706,16 +711,32 @@ def resource_role_matrix(df):
             row=2,
             col=1,
         )
-        fig.update_xaxes(visible=False, row=2, col=2)
-        fig.update_yaxes(visible=False, row=2, col=2)
+        # Totals cell: one centered number, y matched to the column-total row
+        fig.update_xaxes(
+            visible=False,
+            range=[0, 1],
+            showticklabels=False,
+            row=2,
+            col=2,
+        )
+        fig.update_yaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            range=[-0.4, 0.4],
+            matches="y3",
+            row=2,
+            col=2,
+        )
 
-        # y-axis label position for Resource (use annotation); match style on bottom for totals
+        # Wider space for resource names (l= margin) — no “Resource” header
         fig.update_yaxes(
             title_text="",
             type="category",
             categoryorder="array",
             categoryarray=resources_sorted,
             autorange="reversed",
+            automargin=True,
             row=1,
             col=1,
         )
@@ -730,10 +751,10 @@ def resource_role_matrix(df):
             row=1,
             col=2,
         )
-        # Same y-axis label style as left: title on the left, rotated, for the column-total row
+        # Count row: no rotated axis title; horizontal two-line label added below as annotation
         fig.update_yaxes(
-            title_text="Total number of roles",
-            title_font=dict(size=12),
+            title_text="",
+            side="left",
             showticklabels=False,
             showgrid=False,
             zeroline=False,
@@ -754,7 +775,7 @@ def resource_role_matrix(df):
             },
             height=plot_height,
             plot_bgcolor="white",
-            margin=dict(t=120, b=120, l=100, r=100),
+            margin=dict(t=120, b=100, l=150, r=100),
             legend=dict(
                 title=dict(text="Role"),
                 orientation="h",
@@ -764,19 +785,17 @@ def resource_role_matrix(df):
                 x=0.5,
             ),
         )
-        # "Resource" at top-left of the matrix (subplot 1,1). Plotly disallows "x1" in xref; use x domain / y domain for the first axes.
+        # Two-line label left of the totals row (paper coords; plot area is roughly y 0.12–0.9)
         fig.add_annotation(
-            text="Resource",
-            font=dict(size=12),
+            text="Total number<br>of roles",
+            font=dict(size=11),
             showarrow=False,
-            xref="x domain",
-            yref="y domain",
-            x=0,
-            y=1,
-            xanchor="right",
-            yanchor="top",
-            xshift=-6,
-            yshift=6,
+            xref="paper",
+            yref="paper",
+            x=0.02,
+            y=0.16,
+            xanchor="left",
+            yanchor="middle",
         )
 
     plot = fig.to_json()
