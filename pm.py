@@ -1556,9 +1556,13 @@ def normalized_activity_resource_duration_matrix(df):
         col=1,
     )
 
+    class_order = ["Slowest", "Normal", "Fastest", "No data"]
+    class_legend_seen = {duration_class: False for duration_class in class_order}
     for j, resource in enumerate(resources_sorted):
-        cell_colors = []
-        cell_hover = []
+        cells_by_class = {
+            duration_class: {"activities": [], "hover": []}
+            for duration_class in class_order
+        }
         for activity in activities_sorted:
             record = records_by_pair.get((activity, resource))
             if record is None:
@@ -1575,38 +1579,33 @@ def normalized_activity_resource_duration_matrix(df):
                     f"Normalized Duration: {normalized_duration:.2f}<br>"
                     f"Class: {duration_class}"
                 )
-            cell_colors.append(color_by_class[duration_class])
-            cell_hover.append(hover_text)
+            cells_by_class[duration_class]["activities"].append(activity)
+            cells_by_class[duration_class]["hover"].append(hover_text)
 
-        fig.add_trace(
-            go.Bar(
-                x=[cell_width] * len(activities_sorted),
-                y=activities_sorted,
-                base=[j + cell_gap] * len(activities_sorted),
-                orientation="h",
-                width=bar_y_width,
-                marker=dict(color=cell_colors, line=dict(width=0)),
-                hovertext=cell_hover,
-                hoverinfo="text",
-                showlegend=False,
-            ),
-            row=1,
-            col=2,
-        )
+        for duration_class in class_order:
+            class_activities = cells_by_class[duration_class]["activities"]
+            if not class_activities:
+                continue
 
-    for duration_class in ["Slowest", "Normal", "Fastest", "No data"]:
-        fig.add_trace(
-            go.Scatter(
-                x=[None],
-                y=[None],
-                mode="markers",
-                name=duration_class,
-                marker=dict(size=14, color=color_by_class[duration_class], symbol="square"),
-                showlegend=True,
-            ),
-            row=1,
-            col=2,
-        )
+            should_show_legend = not class_legend_seen[duration_class]
+            class_legend_seen[duration_class] = True
+            fig.add_trace(
+                go.Bar(
+                    x=[cell_width] * len(class_activities),
+                    y=class_activities,
+                    base=[j + cell_gap] * len(class_activities),
+                    orientation="h",
+                    width=bar_y_width,
+                    name=duration_class,
+                    legendgroup=duration_class,
+                    showlegend=should_show_legend,
+                    marker=dict(color=color_by_class[duration_class], line=dict(width=0)),
+                    hovertext=cells_by_class[duration_class]["hover"],
+                    hoverinfo="text",
+                ),
+                row=1,
+                col=2,
+            )
 
     fig.update_xaxes(
         visible=False,
@@ -1669,6 +1668,7 @@ def normalized_activity_resource_duration_matrix(df):
         margin=dict(t=150, b=70, l=80, r=180),
         legend=dict(
             title=dict(text="Case Duration"),
+            groupclick="togglegroup",
             yanchor="top",
             y=1.0,
             xanchor="left",
