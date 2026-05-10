@@ -931,7 +931,14 @@ def resource_role_matrix(df):
                 )
 
     plot = fig.to_json()
-    table_records = meta.drop(columns=["roles_key"], errors="ignore").to_dict(orient="records")
+    table_df = meta.drop(columns=["roles_key"], errors="ignore").copy()
+    if "Roles" in table_df.columns:
+        table_df["Roles"] = table_df["Roles"].apply(
+            lambda roles: ", ".join(str(role) for role in roles)
+            if isinstance(roles, list)
+            else roles
+        )
+    table_records = table_df.to_dict(orient="records")
 
     return OutputModel(
         table=table_records,
