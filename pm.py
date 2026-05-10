@@ -69,13 +69,13 @@ custom_palette_1 = [
     "#B875E6",
     "#E6D475",
     "#8AE675",
-    "#db6d53", 
+    "#db6d53",
     "#8A75E6",
     "#75E6C2",
     "#E675D4",
     "#E6A275",
     "#75B8E6",
-    "#913ec9", 
+    "#913ec9",
     "#E6E675",
     "#75E6A2",
     "#E67575",
@@ -97,36 +97,36 @@ custom_palette_2 = [
 def get_node_hover_details(df):
     # Create a dictionary to store metrics for each activity
     activity_hover_details = {}
-    
+
     # Get list of all unique activities
     activities = df["Activity"].unique()
-    
+
     for selected_activity in activities:
         # Filter only the current activity
         activity_df = df[df["Activity"] == selected_activity].copy()
-        
+
         if activity_df.empty:
             activity_hover_details[selected_activity] = {"error": f"No data found for activity: {selected_activity}"}
             continue
-        
+
         # Count occurrences
         occurrence_count = len(activity_df)
         unique_cases = activity_df["Case ID"].nunique()
         unique_resources = activity_df["Resource"].nunique()
-        
+
         # Get most common role
         responsible_role = activity_df["Role"].mode()[0] if not activity_df["Role"].empty else "Unknown"
-        
+
         # Convert timestamps
         activity_df["Start Timestamp"] = pd.to_datetime(activity_df["Start Timestamp"])
         activity_df["Complete Timestamp"] = pd.to_datetime(activity_df["Complete Timestamp"])
-        
+
         # Calculate durations
         activity_df["Duration"] = (activity_df["Complete Timestamp"] - activity_df["Start Timestamp"]).dt.total_seconds() / 60  # in minutes
-        
+
         # Average case duration
         avg_duration = activity_df.groupby('Case ID')['Duration'].sum().mean()
-        
+
         # Store metrics in dictionary
         activity_hover_details[selected_activity] = {
             "case_count": occurrence_count,
@@ -135,7 +135,7 @@ def get_node_hover_details(df):
             "responsible_role": responsible_role,
             "average_duration": round(avg_duration, 2),
         }
-    
+
     return activity_hover_details
 
 def calculate_node_measures(df, selected_activity):
@@ -173,7 +173,7 @@ def calculate_node_measures(df, selected_activity):
     acd_per_resource_df = acd_per_resource.reset_index()
     acd_per_resource_df.columns = ['Resource', 'Average Case Duration [min]']
 
-    fig = px.bar(acd_per_resource_df, y='Resource', x='Average Case Duration [min]', 
+    fig = px.bar(acd_per_resource_df, y='Resource', x='Average Case Duration [min]',
         title=f'Activity: {selected_activity}',
         labels={'Average Case Duration [min]': 'Average Case Duration [min]', 'Resource': 'Resource'},
         color_discrete_sequence=[BLUE])
@@ -188,7 +188,7 @@ def calculate_node_measures(df, selected_activity):
     )
 
     fig.update_traces(
-        hovertemplate='Avg. Case Duration: %{customdata}', 
+        hovertemplate='Avg. Case Duration: %{customdata}',
         customdata=round(acd_per_resource_df['Average Case Duration [min]'], 2))
     fig.update_xaxes(tickmode='linear', tick0=0, dtick=round(acd_per_resource_df["Average Case Duration [min]"].max()/5), automargin=True)
 
@@ -266,7 +266,7 @@ def units_per_role(df):
     fig.update_layout(
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
-        plot_bgcolor='white',  
+        plot_bgcolor='white',
         title={
             'y':0.9,
             'x':0.5,
@@ -329,7 +329,7 @@ def role_average_duration(df, normalize: bool = False):
         orientation='h',
         color_discrete_sequence=[BLUE])
 
-    # Custom hover text 
+    # Custom hover text
     fig.update_traces(hovertemplate='Average Case Duration: %{x:,.2f} minutes')
 
     fig.update_layout(
@@ -400,7 +400,7 @@ def resource_roles(df):
         'Roles': roles_per_resource
     })
 
-    fig = px.bar(resource_role_df, y='Resource', x='Number of Roles', 
+    fig = px.bar(resource_role_df, y='Resource', x='Number of Roles',
         title='Number of Roles per Resource',
         labels={'Number of Roles': 'Number of Roles', 'Resource': 'Resource'},
         color_discrete_sequence=[BLUE])
@@ -1031,13 +1031,13 @@ def resource_within_role_normalization(df):
         role_average_duration_minutes = (role_df['Average Case Duration'].dt.total_seconds()/ 60).round(2)
         fig.add_trace(
             go.Bar(
-                y=role_df['Resource'], 
+                y=role_df['Resource'],
                 x=role_average_duration_minutes,
                 marker=dict(color=BLUE),
                 hovertemplate='Average Case Duration: %{x} minutes<extra></extra>',
                 orientation='h'
             ),
-            row=i, 
+            row=i,
             col=1
         )
 
@@ -1046,8 +1046,8 @@ def resource_within_role_normalization(df):
         fig.update_xaxes(title_text="Average Case Duration [min]", row=i, col=1)
 
     fig.update_layout(
-        height=576 * len(unique_roles), 
-        #width=1200, 
+        height=576 * len(unique_roles),
+        #width=1200,
         title_text="Average Case Duration (in Minutes) per Role and Resource",
         plot_bgcolor='white',
         showlegend = False,
@@ -1095,7 +1095,7 @@ def resources_per_activity(df, count: bool = True):
     fig.update_layout(
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
-        plot_bgcolor='white',  
+        plot_bgcolor='white',
         title={
             'x':0.5,
             'xanchor': 'center'
@@ -1121,7 +1121,7 @@ def activities_per_role(df):
     fig.update_layout(
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
-        plot_bgcolor='white',  
+        plot_bgcolor='white',
         title={
             'y':0.9,
             'x':0.5,
@@ -1149,7 +1149,7 @@ def activities_per_role_new(df):
         activities_per_role.append(activities)
         # Append the number of roles for the current resource
         activitiy_count.append(role_df['Activity'].nunique())
-        
+
     # Create a new df
     result_df = pd.DataFrame({
         'Role': unique_roles,
@@ -1168,9 +1168,9 @@ def activities_per_role_new(df):
     fig.update_traces(hovertemplate='Activities: <br>%{customdata}', customdata=hovertext)
 
     fig.update_layout(
-        #width=1200, 
-        height=576,  
-        plot_bgcolor='white',  
+        #width=1200,
+        height=576,
+        plot_bgcolor='white',
         title={
             'y':0.9,
             'x':0.5,
@@ -1295,7 +1295,7 @@ def activity_resource_comparison(df, normalize: bool = False):
             activity_average_duration_minutes = (activity_df['Average Case Duration'].dt.total_seconds()/60).round(2)
             fig.add_trace(
                 go.Bar(
-                    y=activity_df['Resource'], 
+                    y=activity_df['Resource'],
                     x=activity_average_duration_minutes,
                     marker=dict(color=BLUE),
                     hovertemplate='Average Case Duration: %{x} minutes<extra></extra>',
@@ -1308,7 +1308,7 @@ def activity_resource_comparison(df, normalize: bool = False):
             fig.update_xaxes(range=[0, max_duration + 1], row=i, col=1)
 
         fig.update_layout(
-            height=576 * len(unique_activities), 
+            height=576 * len(unique_activities),
             #width=1200,
             title_text="Average Case Duration (in Minutes) per Activity and Resource",
             showlegend=False,
@@ -1436,9 +1436,9 @@ def slowest_resource_per_activity(df):
     slowest = result_df.copy()
     #slowest['Average Case Duration'] = (slowest['Average Case Duration'].dt.total_seconds() / 60).round(2)
 
-    fig = px.bar(slowest, 
-        y='Activity', 
-        x='Average Case Duration (Minutes)', 
+    fig = px.bar(slowest,
+        y='Activity',
+        x='Average Case Duration (Minutes)',
         title='Slowest Resource per Activity',
         labels={'Average Case Duration': 'Average Case Duration [min]'},
         orientation='h',
@@ -1557,12 +1557,12 @@ def total_duration_per_resource_and_activity(df):
         x='Percentage Time Spent (%)',
         y='Resource',
         color='Activity',
-        orientation='h', 
+        orientation='h',
         title='Percentage of Time Spent on Each Activity by Resource',
         labels={'Percentage Time Spent (%)': 'Percentage of Total Time Spent'},
         barmode='stack',
-        custom_data=['Activity', 'Percentage Time Spent (%)'], 
-        color_discrete_sequence=color_palette 
+        custom_data=['Activity', 'Percentage Time Spent (%)'],
+        color_discrete_sequence=color_palette
     )
 
     # Custom hover text
@@ -1574,8 +1574,8 @@ def total_duration_per_resource_and_activity(df):
     fig.update_layout(
         plot_bgcolor='white',
         #showlegend=False,
-        #width=1200,  
-        height=800,  
+        #width=1200,
+        height=800,
         xaxis=dict(dtick=10,title=dict(standoff=35)),
         #yaxis=dict(pad=10),
         bargap=0.3,
@@ -1589,8 +1589,8 @@ def total_duration_per_resource_and_activity(df):
         legend=dict(
             orientation="h",
             y=-0.2,
-            xanchor='center',  
-            x=0.45  
+            xanchor='center',
+            x=0.45
         )
     )
 
@@ -1655,7 +1655,7 @@ def capacity_utilization_resource(df, work_hours_per_day=7.7, activity=""):
        # width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1697,7 +1697,7 @@ def capacity_utilization_resource_new(df):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1725,13 +1725,13 @@ def workload_distribution_per_resource(df):
 
     # Merge dfs
     result_df = pd.merge(total_time_role, total_time_resource, on='Resource')
-    
+
     # calculate relative time
     result_df['Percentage (%)'] = ((result_df['Total Time Worked in Role (hr)'] / result_df['Total Time Worked (hr)']) * 100).round(2)
-    
+
     # drop irrelevant columns
     result_df.drop(columns=['Total Time Worked', 'Total Time Worked (hr)'], inplace=True)
-    
+
     #return result_df
     workload_distribution_per_resource_plot = result_df.copy()
     unique_roles = workload_distribution_per_resource_plot['Role'].unique()
@@ -1756,7 +1756,7 @@ def workload_distribution_per_resource(df):
         height=800,  # Height in pixels
         plot_bgcolor='white',
         margin = {'pad': 15},
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1766,8 +1766,8 @@ def workload_distribution_per_resource(df):
         legend=dict(
             orientation="h",
             y=-0.2,
-            xanchor='center',  
-            x=0.45  
+            xanchor='center',
+            x=0.45
         )
     )
 
@@ -1811,7 +1811,7 @@ def total_duration_per_role(df):
     return result_df
 
 def total_duration_per_role_and_activity(df):
-    
+
     # Group by Role and Activity, sum durations to get the total time spent on each activity by each role
     result_df = df.groupby(['Role', 'Activity'])['Duration'].sum().reset_index()
 
@@ -1847,12 +1847,12 @@ def total_duration_per_role_and_activity(df):
         x='Percentage Time Spent (%)',
         y='Role',
         color='Activity',
-        orientation='h', 
+        orientation='h',
         title='Percentage of Time Spent on Each Activity by Role',
         labels={'Percentage Time Spent (%)': 'Percentage of Total Time Spent'},
         barmode='stack',
-        custom_data=['Activity', 'Percentage Time Spent (%)'], 
-        color_discrete_sequence=color_palette 
+        custom_data=['Activity', 'Percentage Time Spent (%)'],
+        color_discrete_sequence=color_palette
     )
 
     # Custom hover text
@@ -1864,8 +1864,8 @@ def total_duration_per_role_and_activity(df):
     fig.update_layout(
         plot_bgcolor='white',
         #showlegend=False,
-        #width=1200,  
-        height=800,  
+        #width=1200,
+        height=800,
         xaxis=dict(dtick=10,title=dict(standoff=35)),
         #yaxis=dict(pad=10),
         bargap=0.5,
@@ -1879,8 +1879,8 @@ def total_duration_per_role_and_activity(df):
         legend=dict(
             orientation="h",
             y=-0.2,
-            xanchor='center',  
-            x=0.45  
+            xanchor='center',
+            x=0.45
         )
     )
 
@@ -1929,7 +1929,7 @@ def capacity_utilization_role(df, work_hours_per_day=7.7):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1984,7 +1984,7 @@ def capacity_utilization_role_new(df):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -2058,7 +2058,7 @@ def capacity_utilization_activity(df, work_hours_per_day=7.7):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -2109,11 +2109,11 @@ def activity_case_duration(df):
         "Average Case Duration": average_duration_per_case #,
         #"Median Case Duration": median_duration_per_case
     })
-    
+
     ## Perform min-max normalization using lambda functions on both Average and Median Case Duration
     result_df['Normalized Average Case Duration'] = result_df['Average Case Duration'].apply(
         lambda x: (x - result_df['Average Case Duration'].min()) / (result_df['Average Case Duration'].max() - result_df['Average Case Duration'].min()))
-        
+
     #result_df['Normalized Median Case Duration'] = result_df['Median Case Duration'].apply(
     #    lambda x: (x - result_df['Median Case Duration'].min()) / (result_df['Median Case Duration'].max() - result_df['Median Case Duration'].min()))
 
@@ -2130,13 +2130,13 @@ def activity_case_duration(df):
         orientation='h',
         color_discrete_sequence=['#2066a8'])
 
-    # Custom hover text 
+    # Custom hover text
     fig.update_traces(hovertemplate='Average Case Duration: %{x:,.2f} minutes')
 
     fig.update_layout(
         plot_bgcolor='white',
-        #width=1200,  
-        height=576,  
+        #width=1200,
+        height=576,
         title={
             'y':0.9,
             'x':0.5,
@@ -2174,13 +2174,13 @@ def activity_workload_distribution_per_resource(df):
 
     # Merge dfs
     result_df = pd.merge(total_time_activity, total_time_resource, on='Resource')
-    
+
     # calculate relative time
     result_df['Percentage (%)'] = ((result_df['Total Time Spent on Activity (hr)'] / result_df['Total Time Worked (hr)']) * 100).round(2)
-    
+
     # drop irrelevant columns
     result_df.drop(columns=['Total Time Worked', 'Total Time Worked (hr)'], inplace=True)
-    
+
     return result_df
 
 def capacity_resource_activity(df):
@@ -2223,7 +2223,7 @@ def capacity_utilization_activity_new(df):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9, #-0.15, #0.9,
             'x':0.5,
@@ -2261,7 +2261,7 @@ def get_color_option_1(df):
         "Activity": unique_activities,
         "Average Case Duration": average_duration_per_case
     })
-    
+
     result_df['Normalized Average Case Duration'] = result_df['Average Case Duration'].apply(
         lambda x: (x - result_df['Average Case Duration'].min()) / (result_df['Average Case Duration'].max() - result_df['Average Case Duration'].min()))
 
@@ -2282,13 +2282,13 @@ def get_color_option_2(df):
 
     # Merge dfs
     result_df = pd.merge(total_time_role, total_time_resource, on='Resource')
-    
+
     # calculate relative time
     result_df['Percentage (%)'] = ((result_df['Total Time Worked in Role (hr)'] / result_df['Total Time Worked (hr)']) * 100).round(2)
-    
+
     # drop irrelevant columns
     result_df.drop(columns=['Total Time Worked', 'Total Time Worked (hr)'], inplace=True)
-    
+
     #return result_df
     workload_distribution_per_resource_plot = result_df.copy()
     unique_roles = workload_distribution_per_resource_plot['Role'].unique()
@@ -2299,7 +2299,7 @@ def get_color_option_2(df):
     activity_role_df = pd.DataFrame(activities_per_role(df).table)
     unique_activities = activity_role_df['Activity'].unique()
     activity_color_mapping = {activity: split_equal([role_color_mapping[role[1]] for role in activity_role_df.loc[activity_role_df['Activity']==activity, 'Role'].items()]) for activity in unique_activities}
-    
+
     return activity_color_mapping
 
 def get_color_option_3(df):
@@ -2365,7 +2365,7 @@ def get_color_option_4(df):
 
     # dictionary for dfg color coding
     activity_color_mapping = {activity: color_palette[i] for i, activity in enumerate(unique_activities)}
-    
+
     return activity_color_mapping
 
 def get_color_option_5(df):
