@@ -571,14 +571,13 @@ def resource_role_matrix(df):
             ],
         )
     else:
-        colorscale = _resource_role_matrix_colorscale(n_roles, custom_palette_1)
         palette = custom_palette_1
         per_role_count = [int(resources_per_role_counts.get(r, 0)) for r in roles_sorted]
         roles_count_per_res = [int(roles_per_resource_counts.get(r, 0)) for r in resources_sorted]
         max_role_count = max(roles_count_per_res) if roles_count_per_res else 1
         bar_axis_max = max(max_role_count * 1.12, 1.0)
         side_bar_gray = "#4a4a4a"
-        # Bar strip is ~1/9 of the heatmap width; uniform bar height (thickness) for every resource
+        # Bar strip is ~1/9 of the matrix width; uniform bar height (thickness) for every resource
         bar_y_width = 0.7
         # 3 columns: [label | heatmap | bars]
         # Paper-width fraction: scale with longest resource id (two-line “Total number …” is ~18+ chars at this font).
@@ -628,24 +627,40 @@ def resource_role_matrix(df):
             col=1,
         )
 
-        fig.add_trace(
-            go.Heatmap(
-                z=z,
-                x=roles_sorted,
-                y=resources_sorted,
-                text=hover,
-                hoverinfo="text",
-                colorscale=colorscale,
-                zmin=0,
-                zmax=n_roles,
-                showscale=False,
-                showlegend=False,
-                xgap=2,
-                ygap=2,
-            ),
-            row=1,
-            col=2,
-        )
+        matrix_empty_color = "#ededed"
+        matrix_col_gap = 0.02
+        matrix_col_width = 1.0 - (2 * matrix_col_gap)
+        for j, role in enumerate(roles_sorted):
+            role_color = palette[j % len(palette)]
+            legendgroup = f"role:{role}"
+            marker_colors = []
+            cell_hover = []
+            for i, resource in enumerate(resources_sorted):
+                has_role = z[i][j] != 0
+                marker_colors.append(role_color if has_role else matrix_empty_color)
+                cell_hover.append(
+                    f"Resource: {resource}<br>Role: {role}"
+                    if has_role
+                    else f"Resource: {resource}<br>Role: {role}<br>No assignment"
+                )
+
+            fig.add_trace(
+                go.Bar(
+                    x=[matrix_col_width] * n_res,
+                    y=resources_sorted,
+                    base=[j + matrix_col_gap] * n_res,
+                    orientation="h",
+                    width=bar_y_width,
+                    name=role,
+                    legendgroup=legendgroup,
+                    marker=dict(color=marker_colors, line=dict(width=0)),
+                    hovertext=cell_hover,
+                    hoverinfo="text",
+                    showlegend=True,
+                ),
+                row=1,
+                col=2,
+            )
         fig.add_trace(
             go.Bar(
                 x=roles_count_per_res,
@@ -680,24 +695,25 @@ def resource_role_matrix(df):
             row=1,
             col=1,
         )
-        per_role_hover = [
-            f"Role: {r}<br>Total number of resources: {c}" for r, c in zip(roles_sorted, per_role_count)
-        ]
-        fig.add_trace(
-            go.Scatter(
-                x=roles_sorted,
-                y=[count_row_y] * n_roles,
-                mode="text",
-                text=[str(c) for c in per_role_count],
-                textfont=dict(size=11, color="#333333"),
-                textposition="middle center",
-                showlegend=False,
-                hovertext=per_role_hover,
-                hoverinfo="text",
-            ),
-            row=2,
-            col=2,
-        )
+        for j, role in enumerate(roles_sorted):
+            role_count = per_role_count[j]
+            legendgroup = f"role:{role}"
+            fig.add_trace(
+                go.Scatter(
+                    x=[j + 0.5],
+                    y=[count_row_y],
+                    mode="text",
+                    text=[str(role_count)],
+                    textfont=dict(size=11, color="#333333"),
+                    textposition="middle center",
+                    legendgroup=legendgroup,
+                    showlegend=False,
+                    hovertext=f"Role: {role}<br>Total number of resources: {role_count}",
+                    hoverinfo="text",
+                ),
+                row=2,
+                col=2,
+            )
         fig.add_trace(
             go.Scatter(
                 x=[0.5],
@@ -729,30 +745,14 @@ def resource_role_matrix(df):
             col=1,
         )
 
-        for j, role in enumerate(roles_sorted):
-            color = palette[j % len(palette)]
-            fig.add_trace(
-                go.Scatter(
-                    x=[None],
-                    y=[None],
-                    mode="markers",
-                    name=role,
-                    marker=dict(size=12, color=color, symbol="square"),
-                    showlegend=True,
-                    visible="legendonly",
-                ),
-                row=1,
-                col=2,
-            )
-
         fig.update_xaxes(
-            type="category",
-            categoryorder="array",
-            categoryarray=roles_sorted,
+            type="linear",
+            range=[0, n_roles],
             showticklabels=False,
             showgrid=False,
             title_text="",
             automargin=False,
+            autorange=False,
             row=1,
             col=2,
         )
@@ -767,13 +767,13 @@ def resource_role_matrix(df):
             col=3,
         )
         fig.update_xaxes(
-            type="category",
-            categoryorder="array",
-            categoryarray=roles_sorted,
+            type="linear",
+            range=[0, n_roles],
             showticklabels=False,
             showgrid=False,
             title_text="",
             automargin=False,
+            autorange=False,
             row=2,
             col=2,
         )
@@ -884,11 +884,13 @@ def resource_role_matrix(df):
             legend=dict(
                 title=dict(text="Role"),
                 orientation="h",
+                groupclick="togglegroup",
                 yanchor="top",
                 y=-0.11,
                 xanchor="center",
                 x=0.5,
             ),
+            barmode="overlay",
         )
         if fig.layout.annotations:
             for i, ann in enumerate(fig.layout.annotations):
