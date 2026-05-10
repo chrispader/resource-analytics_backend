@@ -78,6 +78,12 @@
         "info": "Normalized heatmap comparing resource performance across activities. Helps identify inefficiencies or training needs."
     },
     {
+        "value": "normalized_activity_resource_duration_matrix",
+        "label": "Normalized Duration per Activity and Resource Matrix",
+        "disabled": null,
+        "info": "Shows normalized average case duration for each activity-resource pair in a matrix. Helps identify fastest, normal, and slowest resources per activity."
+    },
+    {
         "value": null,
         "label": "Workload Distribution",
         "disabled": 1.0,
