@@ -633,11 +633,11 @@ def resource_role_matrix(df):
         for j, role in enumerate(roles_sorted):
             role_color = palette[j % len(palette)]
             legendgroup = f"role:{role}"
-            marker_colors = []
+            cell_colors = []
             cell_hover = []
             for i, resource in enumerate(resources_sorted):
                 has_role = z[i][j] != 0
-                marker_colors.append(role_color if has_role else matrix_empty_color)
+                cell_colors.append(role_color if has_role else matrix_empty_color)
                 cell_hover.append(
                     f"Resource: {resource}<br>Role: {role}"
                     if has_role
@@ -652,10 +652,24 @@ def resource_role_matrix(df):
                     orientation="h",
                     width=bar_y_width,
                     name=role,
-                    legendgroup=legendgroup,
-                    marker=dict(color=marker_colors, line=dict(width=0)),
+                    marker=dict(color=cell_colors, line=dict(width=0)),
                     hovertext=cell_hover,
                     hoverinfo="text",
+                    showlegend=False,
+                    legendgroup=legendgroup,
+                ),
+                row=1,
+                col=2,
+            )
+            # Separate legend swatch keeps the legend color tied to the role color, not the first cell's color.
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    name=role,
+                    marker=dict(size=12, color=role_color, symbol="square"),
+                    legendgroup=legendgroup,
                     showlegend=True,
                 ),
                 row=1,
