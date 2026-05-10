@@ -813,7 +813,7 @@ def resource_role_matrix(df):
             categoryarray=resources_sorted,
             autorange="reversed",
             showticklabels=False,
-            showgrid=True,
+            showgrid=False,
             gridcolor="#eeeeee",
             automargin=False,
             row=1,
