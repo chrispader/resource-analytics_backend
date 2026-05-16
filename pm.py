@@ -15,7 +15,7 @@ import base64
 from io import BytesIO
 
 from pydantic import BaseModel
-from typing import Any
+from typing import Any, NamedTuple
 
 class OutputModel(BaseModel):
     table: list[dict]
@@ -27,6 +27,20 @@ class OutputModel(BaseModel):
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
     metrics: dict[str, Any] | None = None
+
+class ResourceRoleMatrixData(BaseModel):
+    roles: list[str]
+    resources: list[str]
+    z: list[list[int]]
+    assignments: list[dict[str, str]]
+    table: list[dict]
+    metrics: dict[str, Any]
+
+
+class ResourceRoleMatrixEvaluationModel(BaseModel):
+    plot: dict[str, Any]
+    matrix: ResourceRoleMatrixData
+
 
 class AnalysisFilterModel(BaseModel):
     metric: list[str]
@@ -439,10 +453,24 @@ def _resource_role_matrix_colorscale(n_roles: int, palette: list[str]) -> list[l
     return scale
 
 
-def resource_role_matrix(df):
+class ResourceRoleMatrixContext(NamedTuple):
+    roles_sorted: list
+    n_roles: int
+    resources_sorted: list
+    n_res: int
+    z: list[list[int]]
+    resources_per_role_counts: dict
+    roles_per_resource_counts: dict
+    total_assignments: int
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    metrics: dict[str, Any]
+    meta: pd.DataFrame
+
+
+def compute_resource_role_matrix_context(df) -> ResourceRoleMatrixContext:
     """
-    Resource×Role assignment matrix (heatmap), Role–Activity edges, and summary metrics
-    for organizational mining style views.
+    Prepare Resource×Role matrix data: assignments, graph elements, and table metadata.
     """
     assignments = df[["Resource", "Role"]].dropna().drop_duplicates()
     roles_sorted = sorted(df["Role"].dropna().unique().tolist())
@@ -542,11 +570,41 @@ def resource_role_matrix(df):
 
     edges = edges_rr + edges_ra
 
-    metrics: dict[str, Any] = {
+    metrics = {
         "total_assignments": total_assignments,
         "resources_per_role": resources_per_role_counts,
         "roles_per_resource": roles_per_resource_counts,
     }
+
+
+    return ResourceRoleMatrixContext(
+        roles_sorted=roles_sorted,
+        n_roles=n_roles,
+        resources_sorted=resources_sorted,
+        n_res=n_res,
+        z=z,
+        resources_per_role_counts=resources_per_role_counts,
+        roles_per_resource_counts=roles_per_resource_counts,
+        total_assignments=total_assignments,
+        nodes=nodes,
+        edges=edges,
+        metrics=metrics,
+        meta=meta,
+    )
+
+
+def build_resource_role_matrix_figure(ctx: ResourceRoleMatrixContext) -> go.Figure:
+    """
+    Build the Plotly figure for the Resource×Role assignment matrix visualization.
+    """
+    roles_sorted = ctx.roles_sorted
+    n_roles = ctx.n_roles
+    resources_sorted = ctx.resources_sorted
+    n_res = ctx.n_res
+    z = ctx.z
+    resources_per_role_counts = ctx.resources_per_role_counts
+    roles_per_resource_counts = ctx.roles_per_resource_counts
+    total_assignments = ctx.total_assignments
 
     # Slightly tighter rows to leave more room for padding around the figure
     row_height_px = 12
@@ -930,7 +988,10 @@ def resource_role_matrix(df):
                     {axis_name: {"domain": [float(dom[0]), float(dom[1])]}}
                 )
 
-    plot = fig.to_json()
+    return fig
+
+
+def format_resource_role_matrix_table(meta: pd.DataFrame) -> list[dict]:
     table_df = meta.drop(columns=["roles_key"], errors="ignore").copy()
     if "Roles" in table_df.columns:
         table_df["Roles"] = table_df["Roles"].apply(
@@ -938,14 +999,51 @@ def resource_role_matrix(df):
             if isinstance(roles, list)
             else roles
         )
-    table_records = table_df.to_dict(orient="records")
+    return table_df.to_dict(orient="records")
+
+
+def resource_role_matrix_data(ctx: ResourceRoleMatrixContext) -> ResourceRoleMatrixData:
+    assignments = [
+        {"resource": ctx.resources_sorted[i], "role": ctx.roles_sorted[j]}
+        for i in range(ctx.n_res)
+        for j in range(ctx.n_roles)
+        if ctx.z[i][j] != 0
+    ]
+    return ResourceRoleMatrixData(
+        roles=ctx.roles_sorted,
+        resources=ctx.resources_sorted,
+        z=ctx.z,
+        assignments=assignments,
+        table=format_resource_role_matrix_table(ctx.meta),
+        metrics=ctx.metrics,
+    )
+
+
+def resource_role_matrix(df):
+    """
+    Resource×Role assignment matrix (heatmap), Role–Activity edges, and summary metrics
+    for organizational mining style views.
+    """
+    ctx = compute_resource_role_matrix_context(df)
+    fig = build_resource_role_matrix_figure(ctx)
+    matrix_data = resource_role_matrix_data(ctx)
 
     return OutputModel(
-        table=table_records,
-        plot=plot,
-        nodes=nodes,
-        edges=edges,
-        metrics=metrics,
+        table=matrix_data.table,
+        plot=fig.to_json(),
+        nodes=ctx.nodes,
+        edges=ctx.edges,
+        metrics=ctx.metrics,
+    )
+
+
+def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
+    """Plotly figure JSON and matrix data for the Resource×Role matrix."""
+    ctx = compute_resource_role_matrix_context(df)
+    fig = build_resource_role_matrix_figure(ctx)
+    return ResourceRoleMatrixEvaluationModel(
+        plot=json.loads(fig.to_json()),
+        matrix=resource_role_matrix_data(ctx),
     )
 
 
