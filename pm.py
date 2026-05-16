@@ -29,8 +29,16 @@ class OutputModel(BaseModel):
     metrics: dict[str, Any] | None = None
 
 class ResourceRoleMatrixData(BaseModel):
-    roles: list[str]
+    """
+    Resource×Role data derived from the event log.
+
+    Row/column order is fixed by `resources` and `roles`. Use `mapping[i][j]` for
+    programmatic checks; `z` is only the Plotly visualization encoding.
+    """
+
     resources: list[str]
+    roles: list[str]
+    mapping: list[list[bool]]
     z: list[list[int]]
     assignments: list[dict[str, str]]
     table: list[dict]
@@ -1002,16 +1010,26 @@ def format_resource_role_matrix_table(meta: pd.DataFrame) -> list[dict]:
     return table_df.to_dict(orient="records")
 
 
+def build_resource_role_mapping(ctx: ResourceRoleMatrixContext) -> list[list[bool]]:
+    """Boolean resource×role grid: mapping[i][j] is True when that assignment exists."""
+    return [
+        [ctx.z[i][j] != 0 for j in range(ctx.n_roles)]
+        for i in range(ctx.n_res)
+    ]
+
+
 def resource_role_matrix_data(ctx: ResourceRoleMatrixContext) -> ResourceRoleMatrixData:
+    mapping = build_resource_role_mapping(ctx)
     assignments = [
         {"resource": ctx.resources_sorted[i], "role": ctx.roles_sorted[j]}
         for i in range(ctx.n_res)
         for j in range(ctx.n_roles)
-        if ctx.z[i][j] != 0
+        if mapping[i][j]
     ]
     return ResourceRoleMatrixData(
-        roles=ctx.roles_sorted,
         resources=ctx.resources_sorted,
+        roles=ctx.roles_sorted,
+        mapping=mapping,
         z=ctx.z,
         assignments=assignments,
         table=format_resource_role_matrix_table(ctx.meta),

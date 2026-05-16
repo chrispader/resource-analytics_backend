@@ -62,7 +62,7 @@ from pm import (
     resource_average_duration,
     resource_roles,
     resource_role_matrix,
-    resource_role_matrix_plot_json,
+    resource_role_matrix_evaluation,
     resource_role_average_duration,
     resource_within_role_normalization,
     roles_per_activity,
@@ -497,7 +497,7 @@ async def read_resource_role_matrix(session_id: str = Depends(get_session_id), p
 @app.get("/resource_role_matrix_evaluation")
 async def read_resource_role_matrix_evaluation(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
     df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
-    return resource_role_matrix_plot_json(df)
+    return resource_role_matrix_evaluation(df)
 
 @app.get("/resource_role_duration")
 async def read_units(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
