@@ -1,6 +1,6 @@
 """Combined evaluation for resource×role matrix orderings."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
@@ -18,7 +18,14 @@ from evaluation.metrics import (
 
 DEFAULT_BACKGROUND_COLOR = "#ffffff"
 DEFAULT_EMPTY_CELL_COLOR = "#ededed"
-CURRENT_ORDERING_VARIANT = "current"
+
+ORDERING_VARIANT_CURRENT = "current"
+ORDERING_VARIANT_DEGREE = "degree_based"
+ORDERING_VARIANT_SIMILARITY = "similarity_based"
+ORDERING_VARIANT_RANDOM = "random"
+
+# Keys used in MatrixEvaluationResultsBundle.orderings (extend when enabling more variants).
+ENABLED_ORDERING_VARIANTS = (ORDERING_VARIANT_CURRENT,)
 
 
 @dataclass(frozen=True)
@@ -43,17 +50,100 @@ class MatrixEvaluationResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class MatrixEvaluationResultsBundle:
+    """
+    Evaluation results for one dataset across matrix orderings.
+
+    orderings: fixed variants (current, degree_based, similarity_based, …).
+    random_baselines: repeated random orderings (one result per seed); empty until enabled.
+    """
+
+    orderings: dict[str, MatrixEvaluationResult] = field(default_factory=dict)
+    random_baselines: tuple[MatrixEvaluationResult, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "orderings": {
+                variant: result.to_dict()
+                for variant, result in self.orderings.items()
+            },
+            "random_baselines": [
+                result.to_dict() for result in self.random_baselines
+            ],
+        }
+
+
 def role_palette(palette: list[str], role_count: int) -> list[str]:
     if role_count <= 0:
         return []
     return palette[:role_count]
 
 
+def build_ordering_variants(base_matrix: ResourceRoleMatrix) -> dict[str, ResourceRoleMatrix]:
+    """
+    Matrices per ordering variant. Only ``current`` is enabled; add degree/similarity here later.
+    """
+    variants: dict[str, ResourceRoleMatrix] = {
+        ORDERING_VARIANT_CURRENT: base_matrix,
+    }
+    # from evaluation.ordering import degree_based_ordering, similarity_based_ordering
+    # variants[ORDERING_VARIANT_DEGREE] = degree_based_ordering(base_matrix)
+    # variants[ORDERING_VARIANT_SIMILARITY] = similarity_based_ordering(base_matrix)
+    return variants
+
+
+def evaluate_ordering_variants(
+    base_matrix: ResourceRoleMatrix,
+    palette: list[str],
+    *,
+    background_color: str = DEFAULT_BACKGROUND_COLOR,
+    empty_cell_color: str = DEFAULT_EMPTY_CELL_COLOR,
+    include_random_baselines: bool = False,
+    random_seed_count: int = 100,
+) -> MatrixEvaluationResultsBundle:
+    """
+    Evaluate all enabled ordering variants. Random baselines are optional (off by default).
+    """
+    ordering_results: dict[str, MatrixEvaluationResult] = {}
+    for variant_name, variant_matrix in build_ordering_variants(base_matrix).items():
+        if variant_name not in ENABLED_ORDERING_VARIANTS:
+            continue
+        ordering_results[variant_name] = evaluate_resource_role_matrix(
+            variant_matrix,
+            palette,
+            variant=variant_name,
+            background_color=background_color,
+            empty_cell_color=empty_cell_color,
+        )
+
+    random_results: list[MatrixEvaluationResult] = []
+    if include_random_baselines:
+        from evaluation.ordering import random_ordering
+
+        for seed in range(random_seed_count):
+            random_matrix = random_ordering(base_matrix, seed=seed)
+            random_results.append(
+                evaluate_resource_role_matrix(
+                    random_matrix,
+                    palette,
+                    variant=ORDERING_VARIANT_RANDOM,
+                    background_color=background_color,
+                    empty_cell_color=empty_cell_color,
+                )
+            )
+
+    return MatrixEvaluationResultsBundle(
+        orderings=ordering_results,
+        random_baselines=tuple(random_results),
+    )
+
+
 def evaluate_resource_role_matrix(
     matrix: ResourceRoleMatrix,
     palette: list[str],
     *,
-    variant: str = CURRENT_ORDERING_VARIANT,
+    variant: str = ORDERING_VARIANT_CURRENT,
     background_color: str = DEFAULT_BACKGROUND_COLOR,
     empty_cell_color: str = DEFAULT_EMPTY_CELL_COLOR,
 ) -> MatrixEvaluationResult:
@@ -102,7 +192,7 @@ def evaluate_current_ordering(
     return evaluate_resource_role_matrix(
         matrix,
         palette,
-        variant=CURRENT_ORDERING_VARIANT,
+        variant=ORDERING_VARIANT_CURRENT,
         background_color=background_color,
         empty_cell_color=empty_cell_color,
     )

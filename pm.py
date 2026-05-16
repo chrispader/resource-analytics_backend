@@ -63,10 +63,22 @@ class ResourceRoleMatrixQualityEvaluation(BaseModel):
     empty_cell_delta_e: float
 
 
+class ResourceRoleMatrixEvaluations(BaseModel):
+    """
+    Quality metrics grouped by ordering variant.
+
+    orderings: named variants (e.g. current, degree_based, similarity_based).
+    random_baselines: optional list of metrics from repeated random orderings.
+    """
+
+    orderings: dict[str, ResourceRoleMatrixQualityEvaluation]
+    random_baselines: list[ResourceRoleMatrixQualityEvaluation] = []
+
+
 class ResourceRoleMatrixEvaluationModel(BaseModel):
     plot: dict[str, Any]
     matrix: ResourceRoleMatrixData
-    evaluation: ResourceRoleMatrixQualityEvaluation
+    evaluations: ResourceRoleMatrixEvaluations
 
 
 class AnalysisFilterModel(BaseModel):
@@ -1076,8 +1088,8 @@ def resource_role_matrix(df):
 
 def evaluate_resource_role_matrix_quality(
     matrix_data: ResourceRoleMatrixData,
-) -> ResourceRoleMatrixQualityEvaluation:
-    from evaluation.evaluate import evaluate_current_ordering
+) -> ResourceRoleMatrixEvaluations:
+    from evaluation.evaluate import evaluate_ordering_variants
     from evaluation.matrix_model import resource_role_matrix_from_mapping
 
     matrix_model = resource_role_matrix_from_mapping(
@@ -1085,8 +1097,17 @@ def evaluate_resource_role_matrix_quality(
         roles=matrix_data.roles,
         mapping=matrix_data.mapping,
     )
-    result = evaluate_current_ordering(matrix_model, palette=custom_palette_1)
-    return ResourceRoleMatrixQualityEvaluation(**result.to_dict())
+    bundle = evaluate_ordering_variants(matrix_model, palette=custom_palette_1)
+    return ResourceRoleMatrixEvaluations(
+        orderings={
+            variant: ResourceRoleMatrixQualityEvaluation(**result.to_dict())
+            for variant, result in bundle.orderings.items()
+        },
+        random_baselines=[
+            ResourceRoleMatrixQualityEvaluation(**result.to_dict())
+            for result in bundle.random_baselines
+        ],
+    )
 
 
 def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
@@ -1097,7 +1118,7 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
     return ResourceRoleMatrixEvaluationModel(
         plot=json.loads(fig.to_json()),
         matrix=matrix_data,
-        evaluation=evaluate_resource_role_matrix_quality(matrix_data),
+        evaluations=evaluate_resource_role_matrix_quality(matrix_data),
     )
 
 

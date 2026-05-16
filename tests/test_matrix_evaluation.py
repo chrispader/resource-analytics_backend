@@ -2,7 +2,11 @@ import numpy as np
 import pytest
 
 from evaluation.color_metrics import contrast_ratio, delta_e_2000, palette_discriminability
-from evaluation.evaluate import evaluate_current_ordering
+from evaluation.evaluate import (
+    ORDERING_VARIANT_CURRENT,
+    evaluate_current_ordering,
+    evaluate_ordering_variants,
+)
 from evaluation.matrix_model import ResourceRoleMatrix, resource_role_matrix_from_mapping
 from evaluation.metrics import (
     average_fragmentation,
@@ -127,9 +131,25 @@ def test_evaluate_current_ordering_smoke():
         matrix,
         palette=["#E68A75", "#75E68A"],
     )
-    assert result.variant == "current"
+    assert result.variant == ORDERING_VARIANT_CURRENT
     assert result.resource_count == 2
     assert result.role_count == 2
     assert result.filled_cells == 2
     assert result.density == 0.5
     assert 0.0 <= result.row_coherence <= 1.0
+
+
+def test_evaluate_ordering_variants_bundle_shape():
+    matrix = resource_role_matrix_from_mapping(
+        resources=["Alice", "Bob"],
+        roles=["Buyer", "Approver"],
+        mapping=[[True, False], [False, True]],
+    )
+    bundle = evaluate_ordering_variants(matrix, palette=["#E68A75", "#75E68A"])
+    assert ORDERING_VARIANT_CURRENT in bundle.orderings
+    assert bundle.orderings[ORDERING_VARIANT_CURRENT].variant == ORDERING_VARIANT_CURRENT
+    assert bundle.random_baselines == ()
+    payload = bundle.to_dict()
+    assert "orderings" in payload
+    assert "random_baselines" in payload
+    assert ORDERING_VARIANT_CURRENT in payload["orderings"]
