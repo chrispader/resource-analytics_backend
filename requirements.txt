@@ -7,3 +7,5 @@ jinja2
 seaborn==0.13.1
 plotly>=5.18.0
 aiofiles
+scikit-image>=0.22.0
+pytest>=7.4.0

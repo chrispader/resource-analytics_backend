@@ -45,9 +45,28 @@ class ResourceRoleMatrixData(BaseModel):
     metrics: dict[str, Any]
 
 
+class ResourceRoleMatrixQualityEvaluation(BaseModel):
+    variant: str
+    resource_count: int
+    role_count: int
+    filled_cells: int
+    density: float
+    row_coherence: float
+    column_coherence: float
+    row_fragmentation: float
+    column_fragmentation: float
+    min_delta_e: float
+    mean_delta_e: float
+    max_delta_e: float
+    min_contrast_ratio: float
+    empty_cell_contrast_ratio: float
+    empty_cell_delta_e: float
+
+
 class ResourceRoleMatrixEvaluationModel(BaseModel):
     plot: dict[str, Any]
     matrix: ResourceRoleMatrixData
+    evaluation: ResourceRoleMatrixQualityEvaluation
 
 
 class AnalysisFilterModel(BaseModel):
@@ -1055,13 +1074,30 @@ def resource_role_matrix(df):
     )
 
 
+def evaluate_resource_role_matrix_quality(
+    matrix_data: ResourceRoleMatrixData,
+) -> ResourceRoleMatrixQualityEvaluation:
+    from evaluation.evaluate import evaluate_current_ordering
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    result = evaluate_current_ordering(matrix_model, palette=custom_palette_1)
+    return ResourceRoleMatrixQualityEvaluation(**result.to_dict())
+
+
 def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
-    """Plotly figure JSON and matrix data for the Resource×Role matrix."""
+    """Plotly figure JSON, matrix data, and quality metrics for the Resource×Role matrix."""
     ctx = compute_resource_role_matrix_context(df)
     fig = build_resource_role_matrix_figure(ctx)
+    matrix_data = resource_role_matrix_data(ctx)
     return ResourceRoleMatrixEvaluationModel(
         plot=json.loads(fig.to_json()),
-        matrix=resource_role_matrix_data(ctx),
+        matrix=matrix_data,
+        evaluation=evaluate_resource_role_matrix_quality(matrix_data),
     )
 
 
