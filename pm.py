@@ -47,6 +47,7 @@ class ResourceRoleMatrixData(BaseModel):
 
 class ResourceRoleMatrixQualityEvaluation(BaseModel):
     variant: str
+    seed: int | None = None
     resource_count: int
     role_count: int
     filled_cells: int
@@ -75,9 +76,18 @@ class ResourceRoleMatrixEvaluations(BaseModel):
     random_baselines: list[ResourceRoleMatrixQualityEvaluation] = []
 
 
+class ResourceRoleMatrixOrderingData(BaseModel):
+    resources: list[str]
+    roles: list[str]
+    mapping: list[list[bool]]
+    z: list[list[int]]
+    assignments: list[dict[str, str]]
+
+
 class ResourceRoleMatrixEvaluationModel(BaseModel):
     plot: dict[str, Any]
     matrix: ResourceRoleMatrixData
+    matrices: dict[str, ResourceRoleMatrixOrderingData]
     evaluations: ResourceRoleMatrixEvaluations
 
 
@@ -1097,7 +1107,12 @@ def evaluate_resource_role_matrix_quality(
         roles=matrix_data.roles,
         mapping=matrix_data.mapping,
     )
-    bundle = evaluate_ordering_variants(matrix_model, palette=custom_palette_1)
+    bundle = evaluate_ordering_variants(
+        matrix_model,
+        palette=custom_palette_1,
+        include_random_baselines=True,
+        random_seed_count=100,
+    )
     return ResourceRoleMatrixEvaluations(
         orderings={
             variant: ResourceRoleMatrixQualityEvaluation(**result.to_dict())
@@ -1110,6 +1125,44 @@ def evaluate_resource_role_matrix_quality(
     )
 
 
+def resource_role_ordering_data_from_matrix(matrix) -> ResourceRoleMatrixOrderingData:
+    mapping = matrix.values.astype(bool).tolist()
+    z = [
+        [column_index + 1 if has_role else 0 for column_index, has_role in enumerate(row)]
+        for row in mapping
+    ]
+    assignments = [
+        {"resource": matrix.resources[i], "role": matrix.roles[j]}
+        for i, row in enumerate(mapping)
+        for j, has_role in enumerate(row)
+        if has_role
+    ]
+    return ResourceRoleMatrixOrderingData(
+        resources=matrix.resources,
+        roles=matrix.roles,
+        mapping=mapping,
+        z=z,
+        assignments=assignments,
+    )
+
+
+def resource_role_ordering_matrices(
+    matrix_data: ResourceRoleMatrixData,
+) -> dict[str, ResourceRoleMatrixOrderingData]:
+    from evaluation.evaluate import build_ordering_variants
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    return {
+        variant: resource_role_ordering_data_from_matrix(matrix)
+        for variant, matrix in build_ordering_variants(matrix_model).items()
+    }
+
+
 def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
     """Plotly figure JSON, matrix data, and quality metrics for the Resource×Role matrix."""
     ctx = compute_resource_role_matrix_context(df)
@@ -1118,6 +1171,7 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
     return ResourceRoleMatrixEvaluationModel(
         plot=json.loads(fig.to_json()),
         matrix=matrix_data,
+        matrices=resource_role_ordering_matrices(matrix_data),
         evaluations=evaluate_resource_role_matrix_quality(matrix_data),
     )
 

@@ -3,7 +3,11 @@ import pytest
 
 from evaluation.color_metrics import contrast_ratio, delta_e_2000, palette_discriminability
 from evaluation.evaluate import (
+    ORDERING_VARIANT_ALPHABETICAL,
     ORDERING_VARIANT_CURRENT,
+    ORDERING_VARIANT_DEGREE,
+    ORDERING_VARIANT_RANDOM,
+    ORDERING_VARIANT_SIMILARITY,
     evaluate_current_ordering,
     evaluate_ordering_variants,
 )
@@ -15,7 +19,7 @@ from evaluation.metrics import (
     jaccard_similarity,
     neighbor_similarity_coherence,
 )
-from evaluation.ordering import degree_based_ordering, random_ordering, reorder_matrix
+from evaluation.ordering import alphabetical_ordering, random_ordering, reorder_matrix
 
 
 def test_density_empty_matrix():
@@ -94,6 +98,30 @@ def test_random_ordering_deterministic_for_seed():
     np.testing.assert_array_equal(first.values, second.values)
 
 
+def test_alphabetical_ordering_sorts_resources_and_roles():
+    matrix = resource_role_matrix_from_mapping(
+        resources=["bob", "Alice"],
+        roles=["Reviewer", "approver"],
+        mapping=[
+            [True, False],
+            [False, True],
+        ],
+    )
+    ordered = alphabetical_ordering(matrix)
+    assert ordered.resources == ["Alice", "bob"]
+    assert ordered.roles == ["approver", "Reviewer"]
+    np.testing.assert_array_equal(
+        ordered.values,
+        np.array(
+            [
+                [True, False],
+                [False, True],
+            ],
+            dtype=np.int8,
+        ),
+    )
+
+
 def test_matrix_model_validation():
     with pytest.raises(ValueError):
         ResourceRoleMatrix(
@@ -146,10 +174,36 @@ def test_evaluate_ordering_variants_bundle_shape():
         mapping=[[True, False], [False, True]],
     )
     bundle = evaluate_ordering_variants(matrix, palette=["#E68A75", "#75E68A"])
-    assert ORDERING_VARIANT_CURRENT in bundle.orderings
+    assert set(bundle.orderings) == {
+        ORDERING_VARIANT_CURRENT,
+        ORDERING_VARIANT_ALPHABETICAL,
+        ORDERING_VARIANT_DEGREE,
+        ORDERING_VARIANT_SIMILARITY,
+    }
     assert bundle.orderings[ORDERING_VARIANT_CURRENT].variant == ORDERING_VARIANT_CURRENT
     assert bundle.random_baselines == ()
     payload = bundle.to_dict()
     assert "orderings" in payload
     assert "random_baselines" in payload
     assert ORDERING_VARIANT_CURRENT in payload["orderings"]
+
+
+def test_evaluate_ordering_variants_random_baseline_count_and_seeds():
+    matrix = resource_role_matrix_from_mapping(
+        resources=["Alice", "Bob", "Charlie"],
+        roles=["Buyer", "Approver"],
+        mapping=[
+            [True, False],
+            [False, True],
+            [True, True],
+        ],
+    )
+    bundle = evaluate_ordering_variants(
+        matrix,
+        palette=["#E68A75", "#75E68A"],
+        include_random_baselines=True,
+        random_seed_count=100,
+    )
+    assert len(bundle.random_baselines) == 100
+    assert [result.seed for result in bundle.random_baselines] == list(range(100))
+    assert {result.variant for result in bundle.random_baselines} == {ORDERING_VARIANT_RANDOM}

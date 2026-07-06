@@ -20,17 +20,23 @@ DEFAULT_BACKGROUND_COLOR = "#ffffff"
 DEFAULT_EMPTY_CELL_COLOR = "#ededed"
 
 ORDERING_VARIANT_CURRENT = "current"
+ORDERING_VARIANT_ALPHABETICAL = "alphabetical"
 ORDERING_VARIANT_DEGREE = "degree_based"
 ORDERING_VARIANT_SIMILARITY = "similarity_based"
 ORDERING_VARIANT_RANDOM = "random"
 
-# Keys used in MatrixEvaluationResultsBundle.orderings (extend when enabling more variants).
-ENABLED_ORDERING_VARIANTS = (ORDERING_VARIANT_CURRENT,)
+ENABLED_ORDERING_VARIANTS = (
+    ORDERING_VARIANT_CURRENT,
+    ORDERING_VARIANT_ALPHABETICAL,
+    ORDERING_VARIANT_DEGREE,
+    ORDERING_VARIANT_SIMILARITY,
+)
 
 
 @dataclass(frozen=True)
 class MatrixEvaluationResult:
     variant: str
+    seed: int | None
     resource_count: int
     role_count: int
     filled_cells: int
@@ -81,16 +87,19 @@ def role_palette(palette: list[str], role_count: int) -> list[str]:
 
 
 def build_ordering_variants(base_matrix: ResourceRoleMatrix) -> dict[str, ResourceRoleMatrix]:
-    """
-    Matrices per ordering variant. Only ``current`` is enabled; add degree/similarity here later.
-    """
-    variants: dict[str, ResourceRoleMatrix] = {
+    """Matrices per fixed ordering variant."""
+    from evaluation.ordering import (
+        alphabetical_ordering,
+        degree_based_ordering,
+        similarity_based_ordering,
+    )
+
+    return {
         ORDERING_VARIANT_CURRENT: base_matrix,
+        ORDERING_VARIANT_ALPHABETICAL: alphabetical_ordering(base_matrix),
+        ORDERING_VARIANT_DEGREE: degree_based_ordering(base_matrix),
+        ORDERING_VARIANT_SIMILARITY: similarity_based_ordering(base_matrix),
     }
-    # from evaluation.ordering import degree_based_ordering, similarity_based_ordering
-    # variants[ORDERING_VARIANT_DEGREE] = degree_based_ordering(base_matrix)
-    # variants[ORDERING_VARIANT_SIMILARITY] = similarity_based_ordering(base_matrix)
-    return variants
 
 
 def evaluate_ordering_variants(
@@ -128,6 +137,7 @@ def evaluate_ordering_variants(
                     random_matrix,
                     palette,
                     variant=ORDERING_VARIANT_RANDOM,
+                    seed=seed,
                     background_color=background_color,
                     empty_cell_color=empty_cell_color,
                 )
@@ -144,6 +154,7 @@ def evaluate_resource_role_matrix(
     palette: list[str],
     *,
     variant: str = ORDERING_VARIANT_CURRENT,
+    seed: int | None = None,
     background_color: str = DEFAULT_BACKGROUND_COLOR,
     empty_cell_color: str = DEFAULT_EMPTY_CELL_COLOR,
 ) -> MatrixEvaluationResult:
@@ -164,6 +175,7 @@ def evaluate_resource_role_matrix(
 
     return MatrixEvaluationResult(
         variant=variant,
+        seed=seed,
         resource_count=len(matrix.resources),
         role_count=len(matrix.roles),
         filled_cells=int(np.count_nonzero(matrix.values)),
@@ -193,6 +205,7 @@ def evaluate_current_ordering(
         matrix,
         palette,
         variant=ORDERING_VARIANT_CURRENT,
+        seed=None,
         background_color=background_color,
         empty_cell_color=empty_cell_color,
     )

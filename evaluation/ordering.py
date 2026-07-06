@@ -1,4 +1,4 @@
-"""Row/column reordering variants for matrix comparison (future use)."""
+"""Row/column reordering variants for matrix comparison."""
 
 import numpy as np
 
@@ -23,6 +23,18 @@ def degree_based_ordering(matrix: ResourceRoleMatrix) -> ResourceRoleMatrix:
     column_degrees = matrix.values.sum(axis=0)
     row_order = list(np.argsort(-row_degrees))
     column_order = list(np.argsort(-column_degrees))
+    return reorder_matrix(matrix, row_order, column_order)
+
+
+def alphabetical_ordering(matrix: ResourceRoleMatrix) -> ResourceRoleMatrix:
+    row_order = sorted(
+        range(len(matrix.resources)),
+        key=lambda index: matrix.resources[index].casefold(),
+    )
+    column_order = sorted(
+        range(len(matrix.roles)),
+        key=lambda index: matrix.roles[index].casefold(),
+    )
     return reorder_matrix(matrix, row_order, column_order)
 
 
