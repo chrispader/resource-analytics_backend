@@ -6,10 +6,10 @@ from evaluation.evaluate import (
     ORDERING_VARIANT_ALPHABETICAL,
     ORDERING_VARIANT_CURRENT,
     ORDERING_VARIANT_DEGREE,
-    ORDERING_VARIANT_RANDOM,
     ORDERING_VARIANT_SIMILARITY,
     evaluate_current_ordering,
     evaluate_ordering_variants,
+    random_ordering_variant_key,
 )
 from evaluation.matrix_model import ResourceRoleMatrix, resource_role_matrix_from_mapping
 from evaluation.metrics import (
@@ -206,4 +206,6 @@ def test_evaluate_ordering_variants_random_baseline_count_and_seeds():
     )
     assert len(bundle.random_baselines) == 100
     assert [result.seed for result in bundle.random_baselines] == list(range(100))
-    assert {result.variant for result in bundle.random_baselines} == {ORDERING_VARIANT_RANDOM}
+    assert [result.variant for result in bundle.random_baselines] == [
+        random_ordering_variant_key(seed) for seed in range(100)
+    ]

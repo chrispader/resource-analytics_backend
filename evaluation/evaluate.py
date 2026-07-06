@@ -33,6 +33,10 @@ ENABLED_ORDERING_VARIANTS = (
 )
 
 
+def random_ordering_variant_key(seed: int) -> str:
+    return f"{ORDERING_VARIANT_RANDOM}_{seed}"
+
+
 @dataclass(frozen=True)
 class MatrixEvaluationResult:
     variant: str
@@ -136,7 +140,7 @@ def evaluate_ordering_variants(
                 evaluate_resource_role_matrix(
                     random_matrix,
                     palette,
-                    variant=ORDERING_VARIANT_RANDOM,
+                    variant=random_ordering_variant_key(seed),
                     seed=seed,
                     background_color=background_color,
                     empty_cell_color=empty_cell_color,
