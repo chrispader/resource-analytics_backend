@@ -23,11 +23,10 @@ from evaluation.metrics import (
 )
 from evaluation.ordering import alphabetical_ordering, random_ordering, reorder_matrix
 from pm import (
-    ResourceRoleMatrixColorMetrics,
     ResourceRoleMatrixData,
     ResourceRoleMatrixEvaluationModel,
     ResourceRoleMatrixEvaluations,
-    ResourceRoleMatrixOrderingData,
+    ResourceRoleMatrixMetricBound,
     ResourceRoleMatrixQualityEvaluation,
 )
 
@@ -262,22 +261,6 @@ def test_evaluate_ordering_variants_random_baseline_count_and_seeds():
 
 
 def test_resource_role_matrix_evaluation_response_contract():
-    matrix_data = ResourceRoleMatrixData(
-        resources=["Alice"],
-        roles=["Buyer"],
-        mapping=[[True]],
-        z=[[1]],
-        assignments=[{"resource": "Alice", "role": "Buyer"}],
-        table=[{"resource": "Alice", "Buyer": True}],
-        metrics={"sample": True},
-    )
-    ordering_matrix = ResourceRoleMatrixOrderingData(
-        resources=matrix_data.resources,
-        roles=matrix_data.roles,
-        mapping=matrix_data.mapping,
-        z=matrix_data.z,
-        assignments=matrix_data.assignments,
-    )
     fixed_orderings = {
         variant: ResourceRoleMatrixQualityEvaluation(
             variant=variant,
@@ -296,29 +279,6 @@ def test_resource_role_matrix_evaluation_response_contract():
         )
     }
     payload = ResourceRoleMatrixEvaluationModel(
-        resource_count=1,
-        role_count=1,
-        filled_cells=1,
-        density=1.0,
-        color_metrics=ResourceRoleMatrixColorMetrics(
-            min_delta_e=0.0,
-            mean_delta_e=0.0,
-            max_delta_e=0.0,
-            min_contrast_ratio=4.5,
-            empty_cell_contrast_ratio=1.2,
-            empty_cell_delta_e=5.0,
-        ),
-        plot={"data": []},
-        matrix=matrix_data,
-        matrices={
-            variant: ordering_matrix
-            for variant in (
-                ORDERING_VARIANT_CURRENT,
-                ORDERING_VARIANT_ALPHABETICAL,
-                ORDERING_VARIANT_DEGREE,
-                ORDERING_VARIANT_SIMILARITY,
-            )
-        },
         evaluations=ResourceRoleMatrixEvaluations(
             orderings=fixed_orderings,
             random_baselines=[
@@ -334,27 +294,49 @@ def test_resource_role_matrix_evaluation_response_contract():
                 for seed in range(100)
             ],
         ),
+        metric_bounds={
+            "row_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "column_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "blockiness": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "row_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=False
+            ),
+            "column_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=False
+            ),
+        },
+        plots={
+            variant: {"data": [], "layout": {}}
+            for variant in (
+                ORDERING_VARIANT_CURRENT,
+                ORDERING_VARIANT_ALPHABETICAL,
+                ORDERING_VARIANT_DEGREE,
+                ORDERING_VARIANT_SIMILARITY,
+                "random_0",
+            )
+        },
     ).model_dump()
 
-    assert payload["resource_count"] == 1
-    assert payload["role_count"] == 1
-    assert payload["filled_cells"] == 1
-    assert payload["density"] == 1.0
-    assert set(payload["color_metrics"]) == {
-        "min_delta_e",
-        "mean_delta_e",
-        "max_delta_e",
-        "min_contrast_ratio",
-        "empty_cell_contrast_ratio",
-        "empty_cell_delta_e",
-    }
-    assert set(payload["matrices"]) == {
+    assert set(payload) == {"evaluations", "metric_bounds", "plots"}
+    assert set(payload["plots"]) == {
         ORDERING_VARIANT_CURRENT,
         ORDERING_VARIANT_ALPHABETICAL,
         ORDERING_VARIANT_DEGREE,
         ORDERING_VARIANT_SIMILARITY,
+        "random_0",
     }
-    assert set(payload["evaluations"]["orderings"]) == set(payload["matrices"])
+    assert payload["metric_bounds"]["row_coherence"] == {
+        "lower": 0.0,
+        "upper": 1.0,
+        "higher_is_better": True,
+    }
+    assert payload["metric_bounds"]["row_fragmentation"]["higher_is_better"] is False
     assert len(payload["evaluations"]["random_baselines"]) == 100
     assert payload["evaluations"]["random_baselines"][99]["variant"] == "random_99"
     assert payload["evaluations"]["random_baselines"][99]["seed"] == 99

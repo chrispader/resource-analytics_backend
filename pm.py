@@ -58,15 +58,6 @@ class ResourceRoleMatrixQualityEvaluation(BaseModel):
     blockiness: float
 
 
-class ResourceRoleMatrixColorMetrics(BaseModel):
-    min_delta_e: float
-    mean_delta_e: float
-    max_delta_e: float
-    min_contrast_ratio: float
-    empty_cell_contrast_ratio: float
-    empty_cell_delta_e: float
-
-
 class ResourceRoleMatrixEvaluations(BaseModel):
     """
     Quality metrics grouped by ordering variant.
@@ -79,24 +70,16 @@ class ResourceRoleMatrixEvaluations(BaseModel):
     random_baselines: list[ResourceRoleMatrixQualityEvaluation] = []
 
 
-class ResourceRoleMatrixOrderingData(BaseModel):
-    resources: list[str]
-    roles: list[str]
-    mapping: list[list[bool]]
-    z: list[list[int]]
-    assignments: list[dict[str, str]]
+class ResourceRoleMatrixMetricBound(BaseModel):
+    lower: float
+    upper: float
+    higher_is_better: bool
 
 
 class ResourceRoleMatrixEvaluationModel(BaseModel):
-    resource_count: int
-    role_count: int
-    filled_cells: int
-    density: float
-    color_metrics: ResourceRoleMatrixColorMetrics
-    plot: dict[str, Any]
-    matrix: ResourceRoleMatrixData
-    matrices: dict[str, ResourceRoleMatrixOrderingData]
     evaluations: ResourceRoleMatrixEvaluations
+    metric_bounds: dict[str, ResourceRoleMatrixMetricBound]
+    plots: dict[str, dict[str, Any]]
 
 
 class AnalysisFilterModel(BaseModel):
@@ -1136,67 +1119,76 @@ def evaluate_resource_role_matrix_quality(
     return evaluations, bundle.orderings[ORDERING_VARIANT_CURRENT]
 
 
-def resource_role_ordering_data_from_matrix(matrix) -> ResourceRoleMatrixOrderingData:
-    mapping = matrix.values.astype(bool).tolist()
+def resource_role_figure_for_matrix(
+    ctx: ResourceRoleMatrixContext, matrix
+) -> go.Figure:
+    """Render an ordering with the same visual encoding as the main matrix."""
     z = [
-        [column_index + 1 if has_role else 0 for column_index, has_role in enumerate(row)]
-        for row in mapping
+        [column_index + 1 if value else 0 for column_index, value in enumerate(row)]
+        for row in matrix.values.astype(bool).tolist()
     ]
-    assignments = [
-        {"resource": matrix.resources[i], "role": matrix.roles[j]}
-        for i, row in enumerate(mapping)
-        for j, has_role in enumerate(row)
-        if has_role
-    ]
-    return ResourceRoleMatrixOrderingData(
-        resources=matrix.resources,
-        roles=matrix.roles,
-        mapping=mapping,
+    ordered_ctx = ResourceRoleMatrixContext(
+        roles_sorted=matrix.roles,
+        n_roles=len(matrix.roles),
+        resources_sorted=matrix.resources,
+        n_res=len(matrix.resources),
         z=z,
-        assignments=assignments,
+        resources_per_role_counts=ctx.resources_per_role_counts,
+        roles_per_resource_counts=ctx.roles_per_resource_counts,
+        total_assignments=ctx.total_assignments,
+        nodes=ctx.nodes,
+        edges=ctx.edges,
+        metrics=ctx.metrics,
+        meta=ctx.meta,
     )
+    return build_resource_role_matrix_figure(ordered_ctx)
 
 
-def resource_role_ordering_matrices(
-    matrix_data: ResourceRoleMatrixData,
-) -> dict[str, ResourceRoleMatrixOrderingData]:
+def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
+    """Quality metrics, theoretical bounds, and comparable ordering plots."""
     from evaluation.evaluate import build_ordering_variants
     from evaluation.matrix_model import resource_role_matrix_from_mapping
+    from evaluation.ordering import random_ordering
+
+    ctx = compute_resource_role_matrix_context(df)
+    matrix_data = resource_role_matrix_data(ctx)
+    evaluations, _ = evaluate_resource_role_matrix_quality(matrix_data)
 
     matrix_model = resource_role_matrix_from_mapping(
         resources=matrix_data.resources,
         roles=matrix_data.roles,
         mapping=matrix_data.mapping,
     )
-    return {
-        variant: resource_role_ordering_data_from_matrix(matrix)
-        for variant, matrix in build_ordering_variants(matrix_model).items()
-    }
+    plot_matrices = build_ordering_variants(matrix_model)
+    plot_matrices["random_0"] = random_ordering(matrix_model, seed=0)
 
-
-def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
-    """Plotly figure JSON, matrix data, and quality metrics for the Resource×Role matrix."""
-    ctx = compute_resource_role_matrix_context(df)
-    fig = build_resource_role_matrix_figure(ctx)
-    matrix_data = resource_role_matrix_data(ctx)
-    evaluations, current_evaluation = evaluate_resource_role_matrix_quality(matrix_data)
     return ResourceRoleMatrixEvaluationModel(
-        resource_count=current_evaluation.resource_count,
-        role_count=current_evaluation.role_count,
-        filled_cells=current_evaluation.filled_cells,
-        density=current_evaluation.density,
-        color_metrics=ResourceRoleMatrixColorMetrics(
-            min_delta_e=current_evaluation.min_delta_e,
-            mean_delta_e=current_evaluation.mean_delta_e,
-            max_delta_e=current_evaluation.max_delta_e,
-            min_contrast_ratio=current_evaluation.min_contrast_ratio,
-            empty_cell_contrast_ratio=current_evaluation.empty_cell_contrast_ratio,
-            empty_cell_delta_e=current_evaluation.empty_cell_delta_e,
-        ),
-        plot=json.loads(fig.to_json()),
-        matrix=matrix_data,
-        matrices=resource_role_ordering_matrices(matrix_data),
         evaluations=evaluations,
+        metric_bounds={
+            "row_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "column_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "blockiness": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "row_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0,
+                upper=float((len(matrix_model.roles) + 1) // 2),
+                higher_is_better=False,
+            ),
+            "column_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0,
+                upper=float((len(matrix_model.resources) + 1) // 2),
+                higher_is_better=False,
+            ),
+        },
+        plots={
+            variant: json.loads(resource_role_figure_for_matrix(ctx, matrix).to_json())
+            for variant, matrix in plot_matrices.items()
+        },
     )
 
 
