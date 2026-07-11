@@ -15,7 +15,10 @@ import base64
 from io import BytesIO
 
 from pydantic import BaseModel
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from evaluation.evaluate import MatrixEvaluationResult
 
 class OutputModel(BaseModel):
     table: list[dict]
@@ -48,14 +51,14 @@ class ResourceRoleMatrixData(BaseModel):
 class ResourceRoleMatrixQualityEvaluation(BaseModel):
     variant: str
     seed: int | None = None
-    resource_count: int
-    role_count: int
-    filled_cells: int
-    density: float
     row_coherence: float
     column_coherence: float
     row_fragmentation: float
     column_fragmentation: float
+    blockiness: float
+
+
+class ResourceRoleMatrixColorMetrics(BaseModel):
     min_delta_e: float
     mean_delta_e: float
     max_delta_e: float
@@ -85,6 +88,11 @@ class ResourceRoleMatrixOrderingData(BaseModel):
 
 
 class ResourceRoleMatrixEvaluationModel(BaseModel):
+    resource_count: int
+    role_count: int
+    filled_cells: int
+    density: float
+    color_metrics: ResourceRoleMatrixColorMetrics
     plot: dict[str, Any]
     matrix: ResourceRoleMatrixData
     matrices: dict[str, ResourceRoleMatrixOrderingData]
@@ -1098,8 +1106,8 @@ def resource_role_matrix(df):
 
 def evaluate_resource_role_matrix_quality(
     matrix_data: ResourceRoleMatrixData,
-) -> ResourceRoleMatrixEvaluations:
-    from evaluation.evaluate import evaluate_ordering_variants
+) -> tuple[ResourceRoleMatrixEvaluations, "MatrixEvaluationResult"]:
+    from evaluation.evaluate import ORDERING_VARIANT_CURRENT, evaluate_ordering_variants
     from evaluation.matrix_model import resource_role_matrix_from_mapping
 
     matrix_model = resource_role_matrix_from_mapping(
@@ -1113,16 +1121,19 @@ def evaluate_resource_role_matrix_quality(
         include_random_baselines=True,
         random_seed_count=100,
     )
-    return ResourceRoleMatrixEvaluations(
+    evaluations = ResourceRoleMatrixEvaluations(
         orderings={
-            variant: ResourceRoleMatrixQualityEvaluation(**result.to_dict())
+            variant: ResourceRoleMatrixQualityEvaluation(
+                **result.ordering_metrics_dict()
+            )
             for variant, result in bundle.orderings.items()
         },
         random_baselines=[
-            ResourceRoleMatrixQualityEvaluation(**result.to_dict())
+            ResourceRoleMatrixQualityEvaluation(**result.ordering_metrics_dict())
             for result in bundle.random_baselines
         ],
     )
+    return evaluations, bundle.orderings[ORDERING_VARIANT_CURRENT]
 
 
 def resource_role_ordering_data_from_matrix(matrix) -> ResourceRoleMatrixOrderingData:
@@ -1168,11 +1179,24 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
     ctx = compute_resource_role_matrix_context(df)
     fig = build_resource_role_matrix_figure(ctx)
     matrix_data = resource_role_matrix_data(ctx)
+    evaluations, current_evaluation = evaluate_resource_role_matrix_quality(matrix_data)
     return ResourceRoleMatrixEvaluationModel(
+        resource_count=current_evaluation.resource_count,
+        role_count=current_evaluation.role_count,
+        filled_cells=current_evaluation.filled_cells,
+        density=current_evaluation.density,
+        color_metrics=ResourceRoleMatrixColorMetrics(
+            min_delta_e=current_evaluation.min_delta_e,
+            mean_delta_e=current_evaluation.mean_delta_e,
+            max_delta_e=current_evaluation.max_delta_e,
+            min_contrast_ratio=current_evaluation.min_contrast_ratio,
+            empty_cell_contrast_ratio=current_evaluation.empty_cell_contrast_ratio,
+            empty_cell_delta_e=current_evaluation.empty_cell_delta_e,
+        ),
         plot=json.loads(fig.to_json()),
         matrix=matrix_data,
         matrices=resource_role_ordering_matrices(matrix_data),
-        evaluations=evaluate_resource_role_matrix_quality(matrix_data),
+        evaluations=evaluations,
     )
 
 

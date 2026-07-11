@@ -27,6 +27,7 @@ def summarize_results(results: list[MatrixEvaluationResult]) -> pd.DataFrame:
             "column_coherence": ["mean", "std"],
             "row_fragmentation": ["mean", "std"],
             "column_fragmentation": ["mean", "std"],
+            "blockiness": ["mean", "std"],
             "min_delta_e": ["mean"],
             "mean_delta_e": ["mean"],
             "min_contrast_ratio": ["mean"],

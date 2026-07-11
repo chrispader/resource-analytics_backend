@@ -12,6 +12,7 @@ from evaluation.color_metrics import (
 from evaluation.matrix_model import ResourceRoleMatrix
 from evaluation.metrics import (
     average_fragmentation,
+    blockiness,
     density,
     neighbor_similarity_coherence,
 )
@@ -49,6 +50,7 @@ class MatrixEvaluationResult:
     column_coherence: float
     row_fragmentation: float
     column_fragmentation: float
+    blockiness: float
     min_delta_e: float
     mean_delta_e: float
     max_delta_e: float
@@ -58,6 +60,18 @@ class MatrixEvaluationResult:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def ordering_metrics_dict(self) -> dict:
+        """Return only fields that can change under row/column permutation."""
+        return {
+            "variant": self.variant,
+            "seed": self.seed,
+            "row_coherence": self.row_coherence,
+            "column_coherence": self.column_coherence,
+            "row_fragmentation": self.row_fragmentation,
+            "column_fragmentation": self.column_fragmentation,
+            "blockiness": self.blockiness,
+        }
 
 
 @dataclass(frozen=True)
@@ -73,21 +87,34 @@ class MatrixEvaluationResultsBundle:
     random_baselines: tuple[MatrixEvaluationResult, ...] = ()
 
     def to_dict(self) -> dict:
+        reference = self.orderings[ORDERING_VARIANT_CURRENT]
         return {
+            "resource_count": reference.resource_count,
+            "role_count": reference.role_count,
+            "filled_cells": reference.filled_cells,
+            "density": reference.density,
+            "color_metrics": {
+                "min_delta_e": reference.min_delta_e,
+                "mean_delta_e": reference.mean_delta_e,
+                "max_delta_e": reference.max_delta_e,
+                "min_contrast_ratio": reference.min_contrast_ratio,
+                "empty_cell_contrast_ratio": reference.empty_cell_contrast_ratio,
+                "empty_cell_delta_e": reference.empty_cell_delta_e,
+            },
             "orderings": {
-                variant: result.to_dict()
+                variant: result.ordering_metrics_dict()
                 for variant, result in self.orderings.items()
             },
             "random_baselines": [
-                result.to_dict() for result in self.random_baselines
+                result.ordering_metrics_dict() for result in self.random_baselines
             ],
         }
 
 
 def role_palette(palette: list[str], role_count: int) -> list[str]:
-    if role_count <= 0:
+    if role_count <= 0 or not palette:
         return []
-    return palette[:role_count]
+    return [palette[index % len(palette)] for index in range(role_count)]
 
 
 def build_ordering_variants(base_matrix: ResourceRoleMatrix) -> dict[str, ResourceRoleMatrix]:
@@ -172,10 +199,9 @@ def evaluate_resource_role_matrix(
     role_colors = role_palette(palette, len(matrix.roles))
     color_distances = palette_discriminability(role_colors)
 
-    contrast_values = [
+    role_contrast_values = [
         contrast_ratio(color, background_color) for color in role_colors
     ]
-    contrast_values.append(contrast_ratio(empty_cell_color, background_color))
 
     return MatrixEvaluationResult(
         variant=variant,
@@ -188,10 +214,13 @@ def evaluate_resource_role_matrix(
         column_coherence=neighbor_similarity_coherence(matrix.values.T),
         row_fragmentation=average_fragmentation(matrix.values),
         column_fragmentation=average_fragmentation(matrix.values.T),
+        blockiness=blockiness(matrix.values),
         min_delta_e=color_distances["min_delta_e"],
         mean_delta_e=color_distances["mean_delta_e"],
         max_delta_e=color_distances["max_delta_e"],
-        min_contrast_ratio=float(np.min(contrast_values)) if contrast_values else 0.0,
+        min_contrast_ratio=(
+            float(np.min(role_contrast_values)) if role_contrast_values else 0.0
+        ),
         empty_cell_contrast_ratio=contrast_ratio(empty_cell_color, background_color),
         empty_cell_delta_e=delta_e_2000(empty_cell_color, background_color),
     )

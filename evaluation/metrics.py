@@ -31,6 +31,26 @@ def neighbor_similarity_coherence(values: np.ndarray) -> float:
     return float(np.mean(similarities))
 
 
+def blockiness(values: np.ndarray) -> float:
+    """Return adjacent-vector block coherence on a 0..1 scale (higher is better).
+
+    This is the complement of normalized Hamilton-path length under Jaccard
+    distance, averaged over the independently reorderable row and column axes.
+    It rewards placing resources with similar role memberships, and roles with
+    similar resource memberships, next to one another.
+    """
+    if values.size == 0:
+        return 0.0
+
+    axis_scores = []
+    if values.shape[0] > 1:
+        axis_scores.append(neighbor_similarity_coherence(values))
+    if values.shape[1] > 1:
+        axis_scores.append(neighbor_similarity_coherence(values.T))
+
+    return float(np.mean(axis_scores)) if axis_scores else 1.0
+
+
 def count_runs(row: np.ndarray) -> int:
     runs = 0
     inside_run = False

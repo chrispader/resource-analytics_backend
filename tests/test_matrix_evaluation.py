@@ -10,16 +10,26 @@ from evaluation.evaluate import (
     evaluate_current_ordering,
     evaluate_ordering_variants,
     random_ordering_variant_key,
+    role_palette,
 )
 from evaluation.matrix_model import ResourceRoleMatrix, resource_role_matrix_from_mapping
 from evaluation.metrics import (
     average_fragmentation,
+    blockiness,
     count_runs,
     density,
     jaccard_similarity,
     neighbor_similarity_coherence,
 )
 from evaluation.ordering import alphabetical_ordering, random_ordering, reorder_matrix
+from pm import (
+    ResourceRoleMatrixColorMetrics,
+    ResourceRoleMatrixData,
+    ResourceRoleMatrixEvaluationModel,
+    ResourceRoleMatrixEvaluations,
+    ResourceRoleMatrixOrderingData,
+    ResourceRoleMatrixQualityEvaluation,
+)
 
 
 def test_density_empty_matrix():
@@ -68,6 +78,27 @@ def test_fragmentation_cases():
 
 def test_average_fragmentation_empty():
     assert average_fragmentation(np.zeros((0, 3), dtype=int)) == 0.0
+
+
+def test_blockiness_rewards_coherent_blocks():
+    coherent_blocks = np.array(
+        [
+            [1, 1, 0, 0],
+            [1, 1, 0, 0],
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+        ]
+    )
+    checkerboard = np.array(
+        [
+            [1, 0, 1, 0],
+            [0, 1, 0, 1],
+            [1, 0, 1, 0],
+            [0, 1, 0, 1],
+        ]
+    )
+    assert blockiness(coherent_blocks) > blockiness(checkerboard)
+    assert blockiness(np.ones((2, 2), dtype=int)) == 1.0
 
 
 def test_reorder_preserves_shape_and_fill_count():
@@ -149,6 +180,16 @@ def test_palette_discriminability_single_color():
     assert result["mean_delta_e"] == 0.0
 
 
+def test_role_palette_matches_visualization_color_cycling():
+    assert role_palette(["#111111", "#222222"], 5) == [
+        "#111111",
+        "#222222",
+        "#111111",
+        "#222222",
+        "#111111",
+    ]
+
+
 def test_evaluate_current_ordering_smoke():
     matrix = resource_role_matrix_from_mapping(
         resources=["Alice", "Bob"],
@@ -164,6 +205,7 @@ def test_evaluate_current_ordering_smoke():
     assert result.role_count == 2
     assert result.filled_cells == 2
     assert result.density == 0.5
+    assert 0.0 <= result.blockiness <= 1.0
     assert 0.0 <= result.row_coherence <= 1.0
 
 
@@ -183,9 +225,17 @@ def test_evaluate_ordering_variants_bundle_shape():
     assert bundle.orderings[ORDERING_VARIANT_CURRENT].variant == ORDERING_VARIANT_CURRENT
     assert bundle.random_baselines == ()
     payload = bundle.to_dict()
+    assert payload["resource_count"] == 2
+    assert payload["role_count"] == 2
+    assert payload["filled_cells"] == 2
+    assert payload["density"] == 0.5
+    assert "color_metrics" in payload
     assert "orderings" in payload
     assert "random_baselines" in payload
     assert ORDERING_VARIANT_CURRENT in payload["orderings"]
+    assert "resource_count" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+    assert "density" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+    assert "min_delta_e" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
 
 
 def test_evaluate_ordering_variants_random_baseline_count_and_seeds():
@@ -209,3 +259,116 @@ def test_evaluate_ordering_variants_random_baseline_count_and_seeds():
     assert [result.variant for result in bundle.random_baselines] == [
         random_ordering_variant_key(seed) for seed in range(100)
     ]
+
+
+def test_resource_role_matrix_evaluation_response_contract():
+    matrix_data = ResourceRoleMatrixData(
+        resources=["Alice"],
+        roles=["Buyer"],
+        mapping=[[True]],
+        z=[[1]],
+        assignments=[{"resource": "Alice", "role": "Buyer"}],
+        table=[{"resource": "Alice", "Buyer": True}],
+        metrics={"sample": True},
+    )
+    ordering_matrix = ResourceRoleMatrixOrderingData(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+        z=matrix_data.z,
+        assignments=matrix_data.assignments,
+    )
+    fixed_orderings = {
+        variant: ResourceRoleMatrixQualityEvaluation(
+            variant=variant,
+            seed=None,
+            row_coherence=1.0,
+            column_coherence=1.0,
+            row_fragmentation=1.0,
+            column_fragmentation=1.0,
+            blockiness=1.0,
+        )
+        for variant in (
+            ORDERING_VARIANT_CURRENT,
+            ORDERING_VARIANT_ALPHABETICAL,
+            ORDERING_VARIANT_DEGREE,
+            ORDERING_VARIANT_SIMILARITY,
+        )
+    }
+    payload = ResourceRoleMatrixEvaluationModel(
+        resource_count=1,
+        role_count=1,
+        filled_cells=1,
+        density=1.0,
+        color_metrics=ResourceRoleMatrixColorMetrics(
+            min_delta_e=0.0,
+            mean_delta_e=0.0,
+            max_delta_e=0.0,
+            min_contrast_ratio=4.5,
+            empty_cell_contrast_ratio=1.2,
+            empty_cell_delta_e=5.0,
+        ),
+        plot={"data": []},
+        matrix=matrix_data,
+        matrices={
+            variant: ordering_matrix
+            for variant in (
+                ORDERING_VARIANT_CURRENT,
+                ORDERING_VARIANT_ALPHABETICAL,
+                ORDERING_VARIANT_DEGREE,
+                ORDERING_VARIANT_SIMILARITY,
+            )
+        },
+        evaluations=ResourceRoleMatrixEvaluations(
+            orderings=fixed_orderings,
+            random_baselines=[
+                ResourceRoleMatrixQualityEvaluation(
+                    variant=random_ordering_variant_key(seed),
+                    seed=seed,
+                    row_coherence=0.0,
+                    column_coherence=0.0,
+                    row_fragmentation=1.0,
+                    column_fragmentation=1.0,
+                    blockiness=0.0,
+                )
+                for seed in range(100)
+            ],
+        ),
+    ).model_dump()
+
+    assert payload["resource_count"] == 1
+    assert payload["role_count"] == 1
+    assert payload["filled_cells"] == 1
+    assert payload["density"] == 1.0
+    assert set(payload["color_metrics"]) == {
+        "min_delta_e",
+        "mean_delta_e",
+        "max_delta_e",
+        "min_contrast_ratio",
+        "empty_cell_contrast_ratio",
+        "empty_cell_delta_e",
+    }
+    assert set(payload["matrices"]) == {
+        ORDERING_VARIANT_CURRENT,
+        ORDERING_VARIANT_ALPHABETICAL,
+        ORDERING_VARIANT_DEGREE,
+        ORDERING_VARIANT_SIMILARITY,
+    }
+    assert set(payload["evaluations"]["orderings"]) == set(payload["matrices"])
+    assert len(payload["evaluations"]["random_baselines"]) == 100
+    assert payload["evaluations"]["random_baselines"][99]["variant"] == "random_99"
+    assert payload["evaluations"]["random_baselines"][99]["seed"] == 99
+
+    current_evaluation = payload["evaluations"]["orderings"][ORDERING_VARIANT_CURRENT]
+    assert current_evaluation == {
+        "variant": ORDERING_VARIANT_CURRENT,
+        "seed": None,
+        "row_coherence": 1.0,
+        "column_coherence": 1.0,
+        "row_fragmentation": 1.0,
+        "column_fragmentation": 1.0,
+        "blockiness": 1.0,
+    }
+    assert "resource_count" not in current_evaluation
+    assert "density" not in current_evaluation
+    assert "min_delta_e" not in current_evaluation
