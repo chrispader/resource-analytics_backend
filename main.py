@@ -305,7 +305,11 @@ async def check_session(request: Request, call_next):
         del sessions[session_id]
 
     response = await call_next(request)
-    if current_session_id and not session:
+    if (
+        current_session_id
+        and not session
+        and "session_id=" not in response.headers.get("set-cookie", "")
+    ):
         response.delete_cookie(key="session_id")
     return response
 
