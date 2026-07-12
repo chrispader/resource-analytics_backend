@@ -5,6 +5,8 @@ from itertools import combinations
 import numpy as np
 from skimage.color import deltaE_ciede2000, rgb2lab
 
+DEFAULT_FULL_DISCRIMINATION_DELTA_E = 20.0
+
 
 def hex_to_rgb01(hex_color: str) -> tuple[float, float, float]:
     normalized = hex_color.lstrip("#")
@@ -62,3 +64,39 @@ def palette_discriminability(colors: list[str]) -> dict[str, float]:
         "mean_delta_e": float(np.mean(distances)),
         "max_delta_e": float(np.max(distances)),
     }
+
+
+def color_discriminability_score(
+    role_colors: list[str],
+    empty_cell_color: str,
+    background_color: str,
+    *,
+    full_discrimination_delta_e: float = DEFAULT_FULL_DISCRIMINATION_DELTA_E,
+) -> float:
+    """Return a 0..1 total score for separation between all visible colors.
+
+    Pairwise CIEDE2000 distances are normalized so the configured target and
+    above receive full credit. Their harmonic mean makes the score sensitive
+    to the weakest color pair instead of allowing it to be hidden by many
+    strongly separated pairs.
+    """
+    if not role_colors or full_discrimination_delta_e <= 0:
+        return 0.0
+
+    visible_colors = [*role_colors, empty_cell_color, background_color]
+    normalized_distances = [
+        min(
+            delta_e_2000(color_a, color_b) / full_discrimination_delta_e,
+            1.0,
+        )
+        for color_a, color_b in combinations(visible_colors, 2)
+    ]
+    if not normalized_distances or any(
+        distance <= 0 for distance in normalized_distances
+    ):
+        return 0.0
+
+    return float(
+        len(normalized_distances)
+        / sum(1.0 / distance for distance in normalized_distances)
+    )

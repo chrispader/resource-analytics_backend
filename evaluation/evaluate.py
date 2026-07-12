@@ -5,9 +5,7 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 
 from evaluation.color_metrics import (
-    contrast_ratio,
-    delta_e_2000,
-    palette_discriminability,
+    color_discriminability_score,
 )
 from evaluation.matrix_model import ResourceRoleMatrix
 from evaluation.metrics import (
@@ -51,12 +49,7 @@ class MatrixEvaluationResult:
     row_fragmentation: float
     column_fragmentation: float
     blockiness: float
-    min_delta_e: float
-    mean_delta_e: float
-    max_delta_e: float
-    min_contrast_ratio: float
-    empty_cell_contrast_ratio: float
-    empty_cell_delta_e: float
+    color_discriminability: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -71,6 +64,7 @@ class MatrixEvaluationResult:
             "row_fragmentation": self.row_fragmentation,
             "column_fragmentation": self.column_fragmentation,
             "blockiness": self.blockiness,
+            "color_discriminability": self.color_discriminability,
         }
 
 
@@ -93,14 +87,7 @@ class MatrixEvaluationResultsBundle:
             "role_count": reference.role_count,
             "filled_cells": reference.filled_cells,
             "density": reference.density,
-            "color_metrics": {
-                "min_delta_e": reference.min_delta_e,
-                "mean_delta_e": reference.mean_delta_e,
-                "max_delta_e": reference.max_delta_e,
-                "min_contrast_ratio": reference.min_contrast_ratio,
-                "empty_cell_contrast_ratio": reference.empty_cell_contrast_ratio,
-                "empty_cell_delta_e": reference.empty_cell_delta_e,
-            },
+            "color_discriminability": reference.color_discriminability,
             "orderings": {
                 variant: result.ordering_metrics_dict()
                 for variant, result in self.orderings.items()
@@ -197,11 +184,6 @@ def evaluate_resource_role_matrix(
     Color metrics are proxies for perceptual separability, not user performance.
     """
     role_colors = role_palette(palette, len(matrix.roles))
-    color_distances = palette_discriminability(role_colors)
-
-    role_contrast_values = [
-        contrast_ratio(color, background_color) for color in role_colors
-    ]
 
     return MatrixEvaluationResult(
         variant=variant,
@@ -215,14 +197,11 @@ def evaluate_resource_role_matrix(
         row_fragmentation=average_fragmentation(matrix.values),
         column_fragmentation=average_fragmentation(matrix.values.T),
         blockiness=blockiness(matrix.values),
-        min_delta_e=color_distances["min_delta_e"],
-        mean_delta_e=color_distances["mean_delta_e"],
-        max_delta_e=color_distances["max_delta_e"],
-        min_contrast_ratio=(
-            float(np.min(role_contrast_values)) if role_contrast_values else 0.0
+        color_discriminability=color_discriminability_score(
+            role_colors,
+            empty_cell_color,
+            background_color,
         ),
-        empty_cell_contrast_ratio=contrast_ratio(empty_cell_color, background_color),
-        empty_cell_delta_e=delta_e_2000(empty_cell_color, background_color),
     )
 
 

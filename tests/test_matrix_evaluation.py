@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from evaluation.color_metrics import contrast_ratio, delta_e_2000, palette_discriminability
+from evaluation.color_metrics import (
+    color_discriminability_score,
+    contrast_ratio,
+    delta_e_2000,
+    palette_discriminability,
+)
 from evaluation.evaluate import (
     ORDERING_VARIANT_ALPHABETICAL,
     ORDERING_VARIANT_CURRENT,
@@ -179,6 +184,37 @@ def test_palette_discriminability_single_color():
     assert result["mean_delta_e"] == 0.0
 
 
+def test_color_discriminability_score_is_normalized():
+    score = color_discriminability_score(
+        ["#ff0000", "#00ff00"],
+        empty_cell_color="#000000",
+        background_color="#ffffff",
+    )
+    assert 0.0 <= score <= 1.0
+
+
+def test_color_discriminability_score_rejects_duplicate_role_colors():
+    assert color_discriminability_score(
+        ["#ff0000", "#ff0000"],
+        empty_cell_color="#000000",
+        background_color="#ffffff",
+    ) == pytest.approx(0.0)
+
+
+def test_color_discriminability_score_rewards_separation_from_background():
+    well_separated = color_discriminability_score(
+        ["#ff0000"],
+        empty_cell_color="#000000",
+        background_color="#ffffff",
+    )
+    barely_separated = color_discriminability_score(
+        ["#ff0000"],
+        empty_cell_color="#fefefe",
+        background_color="#ffffff",
+    )
+    assert well_separated > barely_separated
+
+
 def test_role_palette_matches_visualization_color_cycling():
     assert role_palette(["#111111", "#222222"], 5) == [
         "#111111",
@@ -206,6 +242,7 @@ def test_evaluate_current_ordering_smoke():
     assert result.density == 0.5
     assert 0.0 <= result.blockiness <= 1.0
     assert 0.0 <= result.row_coherence <= 1.0
+    assert 0.0 <= result.color_discriminability <= 1.0
 
 
 def test_evaluate_ordering_variants_bundle_shape():
@@ -228,7 +265,7 @@ def test_evaluate_ordering_variants_bundle_shape():
     assert payload["role_count"] == 2
     assert payload["filled_cells"] == 2
     assert payload["density"] == 0.5
-    assert "color_metrics" in payload
+    assert 0.0 <= payload["color_discriminability"] <= 1.0
     assert "orderings" in payload
     assert "random_baselines" in payload
     assert ORDERING_VARIANT_CURRENT in payload["orderings"]
@@ -270,6 +307,7 @@ def test_resource_role_matrix_evaluation_response_contract():
             row_fragmentation=1.0,
             column_fragmentation=1.0,
             blockiness=1.0,
+            color_discriminability=0.75,
         )
         for variant in (
             ORDERING_VARIANT_CURRENT,
@@ -290,6 +328,7 @@ def test_resource_role_matrix_evaluation_response_contract():
                     row_fragmentation=1.0,
                     column_fragmentation=1.0,
                     blockiness=0.0,
+                    color_discriminability=0.75,
                 )
                 for seed in range(100)
             ],
@@ -302,6 +341,9 @@ def test_resource_role_matrix_evaluation_response_contract():
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "blockiness": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "color_discriminability": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "row_fragmentation": ResourceRoleMatrixMetricBound(
@@ -337,6 +379,11 @@ def test_resource_role_matrix_evaluation_response_contract():
         "higher_is_better": True,
     }
     assert payload["metric_bounds"]["row_fragmentation"]["higher_is_better"] is False
+    assert payload["metric_bounds"]["color_discriminability"] == {
+        "lower": 0.0,
+        "upper": 1.0,
+        "higher_is_better": True,
+    }
     assert len(payload["evaluations"]["random_baselines"]) == 100
     assert payload["evaluations"]["random_baselines"][99]["variant"] == "random_99"
     assert payload["evaluations"]["random_baselines"][99]["seed"] == 99
@@ -350,6 +397,7 @@ def test_resource_role_matrix_evaluation_response_contract():
         "row_fragmentation": 1.0,
         "column_fragmentation": 1.0,
         "blockiness": 1.0,
+        "color_discriminability": 0.75,
     }
     assert "resource_count" not in current_evaluation
     assert "density" not in current_evaluation
