@@ -1,4 +1,7 @@
+import json
+
 import numpy as np
+import pandas as pd
 import pytest
 
 from evaluation.color_metrics import (
@@ -28,11 +31,16 @@ from evaluation.metrics import (
 )
 from evaluation.ordering import alphabetical_ordering, random_ordering, reorder_matrix
 from pm import (
+    PlotlyHeuristicFindingModel,
+    PlotlyHeuristicReportModel,
+    PlotlyHeuristicRuleLabels,
     ResourceRoleMatrixData,
     ResourceRoleMatrixEvaluationModel,
     ResourceRoleMatrixEvaluations,
     ResourceRoleMatrixMetricBound,
     ResourceRoleMatrixQualityEvaluation,
+    resource_role_matrix,
+    resource_role_matrix_evaluation,
 )
 
 
@@ -363,9 +371,30 @@ def test_resource_role_matrix_evaluation_response_contract():
                 "random_0",
             )
         },
+        heuristic_report=PlotlyHeuristicReportModel(
+            summary={"warning": 0, "advice": 1, "pass": 1},
+            feature_summary={"trace_types": ["heatmap"]},
+            findings=[
+                PlotlyHeuristicFindingModel(
+                    rule_id="plot-title",
+                    heuristic="A plot should have a title",
+                    assistance="automatic-check",
+                    status="pass",
+                    message="The plot has a title.",
+                    labels=PlotlyHeuristicRuleLabels(labeling=["title"]),
+                    evidence={"title": "Resource × Role matrix"},
+                    source="https://doi.org/10.1007/978-3-030-90436-4_33",
+                )
+            ],
+        ),
     ).model_dump()
 
-    assert set(payload) == {"evaluations", "metric_bounds", "plots"}
+    assert set(payload) == {
+        "evaluations",
+        "metric_bounds",
+        "plots",
+        "heuristic_report",
+    }
     assert set(payload["plots"]) == {
         ORDERING_VARIANT_CURRENT,
         ORDERING_VARIANT_ALPHABETICAL,
@@ -402,3 +431,49 @@ def test_resource_role_matrix_evaluation_response_contract():
     assert "resource_count" not in current_evaluation
     assert "density" not in current_evaluation
     assert "min_delta_e" not in current_evaluation
+    assert payload["heuristic_report"]["findings"][0]["rule_id"] == "plot-title"
+
+
+def test_resource_role_matrix_response_includes_all_ordering_plots():
+    dataframe = pd.DataFrame(
+        {
+            "Resource": ["Alice", "Bob"],
+            "Role": ["Buyer", "Approver"],
+            "Activity": ["Create", "Approve"],
+        }
+    )
+
+    payload = resource_role_matrix(dataframe).model_dump()
+
+    assert set(payload["plots"]) == {
+        ORDERING_VARIANT_CURRENT,
+        ORDERING_VARIANT_ALPHABETICAL,
+        ORDERING_VARIANT_DEGREE,
+        ORDERING_VARIANT_SIMILARITY,
+        "random_0",
+    }
+    assert json.loads(payload["plot"]) == payload["plots"][ORDERING_VARIANT_CURRENT]
+
+
+def test_resource_role_matrix_evaluation_includes_plotly_heuristic_report():
+    dataframe = pd.DataFrame(
+        {
+            "Resource": ["Alice", "Bob"],
+            "Role": ["Buyer", "Approver"],
+            "Activity": ["Create", "Approve"],
+        }
+    )
+
+    payload = resource_role_matrix_evaluation(dataframe).model_dump()
+
+    assert set(payload["heuristic_report"]["summary"]) == {
+        "warning",
+        "advice",
+        "pass",
+    }
+    findings = {
+        finding["rule_id"]: finding
+        for finding in payload["heuristic_report"]["findings"]
+    }
+    assert findings["plot-title"]["status"] == "pass"
+    assert findings["data-ink-ratio"]["status"] == "advice"

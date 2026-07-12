@@ -31,6 +31,10 @@ class OutputModel(BaseModel):
     edges: list[dict[str, Any]] | None = None
     metrics: dict[str, Any] | None = None
 
+
+class ResourceRoleMatrixOutputModel(OutputModel):
+    plots: dict[str, dict[str, Any]]
+
 class ResourceRoleMatrixData(BaseModel):
     """
     Resource×Role data derived from the event log.
@@ -77,10 +81,39 @@ class ResourceRoleMatrixMetricBound(BaseModel):
     higher_is_better: bool
 
 
+class PlotlyHeuristicRuleLabels(BaseModel):
+    visual_frames: list[str] = []
+    visual_structures: list[str] = []
+    visual_unities: list[str] = []
+    visual_primitives: list[str] = []
+    labeling: list[str] = []
+    interaction: list[str] = []
+    data_attributes: list[str] = []
+
+
+class PlotlyHeuristicFindingModel(BaseModel):
+    rule_id: str
+    heuristic: str
+    assistance: str
+    status: str
+    message: str
+    recommendation: str | None = None
+    labels: PlotlyHeuristicRuleLabels
+    evidence: dict[str, Any]
+    source: str
+
+
+class PlotlyHeuristicReportModel(BaseModel):
+    summary: dict[str, int]
+    feature_summary: dict[str, Any]
+    findings: list[PlotlyHeuristicFindingModel]
+
+
 class ResourceRoleMatrixEvaluationModel(BaseModel):
     evaluations: ResourceRoleMatrixEvaluations
     metric_bounds: dict[str, ResourceRoleMatrixMetricBound]
     plots: dict[str, dict[str, Any]]
+    heuristic_report: PlotlyHeuristicReportModel
 
 
 class AnalysisFilterModel(BaseModel):
@@ -1076,12 +1109,13 @@ def resource_role_matrix(df):
     for organizational mining style views.
     """
     ctx = compute_resource_role_matrix_context(df)
-    fig = build_resource_role_matrix_figure(ctx)
     matrix_data = resource_role_matrix_data(ctx)
+    plots = resource_role_ordering_plots(ctx, matrix_data)
 
-    return OutputModel(
+    return ResourceRoleMatrixOutputModel(
         table=matrix_data.table,
-        plot=fig.to_json(),
+        plot=json.dumps(plots["current"]),
+        plots=plots,
         nodes=ctx.nodes,
         edges=ctx.edges,
         metrics=ctx.metrics,
@@ -1145,11 +1179,33 @@ def resource_role_figure_for_matrix(
     return build_resource_role_matrix_figure(ordered_ctx)
 
 
-def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
-    """Quality metrics, theoretical bounds, and comparable ordering plots."""
+def resource_role_ordering_plots(
+    ctx: ResourceRoleMatrixContext,
+    matrix_data: ResourceRoleMatrixData,
+) -> dict[str, dict[str, Any]]:
+    """Return comparable Plotly figures for every supported matrix ordering."""
     from evaluation.evaluate import build_ordering_variants
     from evaluation.matrix_model import resource_role_matrix_from_mapping
     from evaluation.ordering import random_ordering
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    plot_matrices = build_ordering_variants(matrix_model)
+    plot_matrices["random_0"] = random_ordering(matrix_model, seed=0)
+
+    return {
+        variant: json.loads(resource_role_figure_for_matrix(ctx, matrix).to_json())
+        for variant, matrix in plot_matrices.items()
+    }
+
+
+def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
+    """Quality metrics, heuristic findings, and comparable ordering plots."""
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+    from evaluation.plotly_heuristics import evaluate_plotly_figure
 
     ctx = compute_resource_role_matrix_context(df)
     matrix_data = resource_role_matrix_data(ctx)
@@ -1160,9 +1216,7 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
         roles=matrix_data.roles,
         mapping=matrix_data.mapping,
     )
-    plot_matrices = build_ordering_variants(matrix_model)
-    plot_matrices["random_0"] = random_ordering(matrix_model, seed=0)
-
+    plots = resource_role_ordering_plots(ctx, matrix_data)
     return ResourceRoleMatrixEvaluationModel(
         evaluations=evaluations,
         metric_bounds={
@@ -1189,10 +1243,10 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
                 higher_is_better=False,
             ),
         },
-        plots={
-            variant: json.loads(resource_role_figure_for_matrix(ctx, matrix).to_json())
-            for variant, matrix in plot_matrices.items()
-        },
+        plots=plots,
+        heuristic_report=PlotlyHeuristicReportModel(
+            **evaluate_plotly_figure(plots["current"]).to_dict()
+        ),
     )
 
 
