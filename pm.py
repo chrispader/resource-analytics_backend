@@ -60,17 +60,28 @@ class ResourceRoleMatrixQualityEvaluation(BaseModel):
     row_fragmentation: float
     column_fragmentation: float
     blockiness: float
-    color_discriminability: float
+
+
+class ResourceRoleMatrixColorDiscriminability(BaseModel):
+    score: float
+    min_delta_e: float
+    mean_delta_e: float
+    max_delta_e: float
+    min_contrast_ratio: float
+    mean_contrast_ratio: float
+    max_contrast_ratio: float
 
 
 class ResourceRoleMatrixEvaluations(BaseModel):
     """
     Quality metrics grouped by ordering variant.
 
+    color_discriminability: order-independent checks for the visible colors.
     orderings: named variants (e.g. current, degree_based, similarity_based).
     random_baselines: optional list of metrics from repeated random orderings.
     """
 
+    color_discriminability: ResourceRoleMatrixColorDiscriminability
     orderings: dict[str, ResourceRoleMatrixQualityEvaluation]
     random_baselines: list[ResourceRoleMatrixQualityEvaluation] = []
 
@@ -1140,6 +1151,9 @@ def evaluate_resource_role_matrix_quality(
         random_seed_count=100,
     )
     evaluations = ResourceRoleMatrixEvaluations(
+        color_discriminability=ResourceRoleMatrixColorDiscriminability(
+            **bundle.color_discriminability.to_dict()
+        ),
         orderings={
             variant: ResourceRoleMatrixQualityEvaluation(
                 **result.ordering_metrics_dict()
@@ -1227,9 +1241,6 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "blockiness": ResourceRoleMatrixMetricBound(
-                lower=0.0, upper=1.0, higher_is_better=True
-            ),
-            "color_discriminability": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "row_fragmentation": ResourceRoleMatrixMetricBound(

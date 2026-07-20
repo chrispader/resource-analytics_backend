@@ -1,5 +1,9 @@
 """Structural, perceptual, and Plotly heuristic evaluation."""
 
+from evaluation.color_metrics import (
+    ColorDiscriminabilityResult,
+    evaluate_color_discriminability,
+)
 from evaluation.evaluate import (
     MatrixEvaluationResult,
     MatrixEvaluationResultsBundle,
@@ -18,10 +22,12 @@ from evaluation.plotly_heuristics import (
 __all__ = [
     "MatrixEvaluationResult",
     "MatrixEvaluationResultsBundle",
+    "ColorDiscriminabilityResult",
     "HeuristicReport",
     "PUBLISHED_HEURISTIC_RULES",
     "ResourceRoleMatrix",
     "evaluate_current_ordering",
+    "evaluate_color_discriminability",
     "evaluate_ordering_variants",
     "evaluate_resource_role_matrix",
     "evaluate_plotly_figure",

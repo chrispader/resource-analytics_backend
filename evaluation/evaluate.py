@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 
 from evaluation.color_metrics import (
-    color_discriminability_score,
+    ColorDiscriminabilityResult,
+    evaluate_color_discriminability,
 )
 from evaluation.matrix_model import ResourceRoleMatrix
 from evaluation.metrics import (
@@ -49,7 +50,6 @@ class MatrixEvaluationResult:
     row_fragmentation: float
     column_fragmentation: float
     blockiness: float
-    color_discriminability: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -64,7 +64,6 @@ class MatrixEvaluationResult:
             "row_fragmentation": self.row_fragmentation,
             "column_fragmentation": self.column_fragmentation,
             "blockiness": self.blockiness,
-            "color_discriminability": self.color_discriminability,
         }
 
 
@@ -77,6 +76,7 @@ class MatrixEvaluationResultsBundle:
     random_baselines: repeated random orderings (one result per seed); empty until enabled.
     """
 
+    color_discriminability: ColorDiscriminabilityResult
     orderings: dict[str, MatrixEvaluationResult] = field(default_factory=dict)
     random_baselines: tuple[MatrixEvaluationResult, ...] = ()
 
@@ -87,7 +87,7 @@ class MatrixEvaluationResultsBundle:
             "role_count": reference.role_count,
             "filled_cells": reference.filled_cells,
             "density": reference.density,
-            "color_discriminability": reference.color_discriminability,
+            "color_discriminability": self.color_discriminability.to_dict(),
             "orderings": {
                 variant: result.ordering_metrics_dict()
                 for variant, result in self.orderings.items()
@@ -132,16 +132,19 @@ def evaluate_ordering_variants(
     """
     Evaluate all enabled ordering variants. Random baselines are optional (off by default).
     """
+    role_colors = role_palette(palette, len(base_matrix.roles))
+    color_evaluation = evaluate_color_discriminability(
+        role_colors,
+        empty_cell_color,
+        background_color,
+    )
     ordering_results: dict[str, MatrixEvaluationResult] = {}
     for variant_name, variant_matrix in build_ordering_variants(base_matrix).items():
         if variant_name not in ENABLED_ORDERING_VARIANTS:
             continue
         ordering_results[variant_name] = evaluate_resource_role_matrix(
             variant_matrix,
-            palette,
             variant=variant_name,
-            background_color=background_color,
-            empty_cell_color=empty_cell_color,
         )
 
     random_results: list[MatrixEvaluationResult] = []
@@ -153,15 +156,13 @@ def evaluate_ordering_variants(
             random_results.append(
                 evaluate_resource_role_matrix(
                     random_matrix,
-                    palette,
                     variant=random_ordering_variant_key(seed),
                     seed=seed,
-                    background_color=background_color,
-                    empty_cell_color=empty_cell_color,
                 )
             )
 
     return MatrixEvaluationResultsBundle(
+        color_discriminability=color_evaluation,
         orderings=ordering_results,
         random_baselines=tuple(random_results),
     )
@@ -169,22 +170,16 @@ def evaluate_ordering_variants(
 
 def evaluate_resource_role_matrix(
     matrix: ResourceRoleMatrix,
-    palette: list[str],
     *,
     variant: str = ORDERING_VARIANT_CURRENT,
     seed: int | None = None,
-    background_color: str = DEFAULT_BACKGROUND_COLOR,
-    empty_cell_color: str = DEFAULT_EMPTY_CELL_COLOR,
 ) -> MatrixEvaluationResult:
     """
-    Evaluate structural and color metrics for one matrix ordering.
+    Evaluate structural metrics for one matrix ordering.
 
     Higher row/column coherence suggests similar entities are neighbors.
     Lower fragmentation suggests more compact filled-cell runs.
-    Color metrics are proxies for perceptual separability, not user performance.
     """
-    role_colors = role_palette(palette, len(matrix.roles))
-
     return MatrixEvaluationResult(
         variant=variant,
         seed=seed,
@@ -197,27 +192,15 @@ def evaluate_resource_role_matrix(
         row_fragmentation=average_fragmentation(matrix.values),
         column_fragmentation=average_fragmentation(matrix.values.T),
         blockiness=blockiness(matrix.values),
-        color_discriminability=color_discriminability_score(
-            role_colors,
-            empty_cell_color,
-            background_color,
-        ),
     )
 
 
 def evaluate_current_ordering(
     matrix: ResourceRoleMatrix,
-    palette: list[str],
-    *,
-    background_color: str = DEFAULT_BACKGROUND_COLOR,
-    empty_cell_color: str = DEFAULT_EMPTY_CELL_COLOR,
 ) -> MatrixEvaluationResult:
     """Evaluate the visualization's current resource/role order."""
     return evaluate_resource_role_matrix(
         matrix,
-        palette,
         variant=ORDERING_VARIANT_CURRENT,
         seed=None,
-        background_color=background_color,
-        empty_cell_color=empty_cell_color,
     )

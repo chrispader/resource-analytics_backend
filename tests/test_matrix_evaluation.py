@@ -8,6 +8,7 @@ from evaluation.color_metrics import (
     color_discriminability_score,
     contrast_ratio,
     delta_e_2000,
+    evaluate_color_discriminability,
     palette_discriminability,
 )
 from evaluation.evaluate import (
@@ -34,6 +35,7 @@ from pm import (
     PlotlyHeuristicFindingModel,
     PlotlyHeuristicReportModel,
     PlotlyHeuristicRuleLabels,
+    ResourceRoleMatrixColorDiscriminability,
     ResourceRoleMatrixData,
     ResourceRoleMatrixEvaluationModel,
     ResourceRoleMatrixEvaluations,
@@ -223,6 +225,45 @@ def test_color_discriminability_score_rewards_separation_from_background():
     assert well_separated > barely_separated
 
 
+def test_evaluate_color_discriminability_reports_color_distance_and_contrast():
+    role_colors = ["#000000", "#ff0000"]
+    empty_cell_color = "#777777"
+    background_color = "#ffffff"
+
+    result = evaluate_color_discriminability(
+        role_colors,
+        empty_cell_color,
+        background_color,
+    )
+
+    expected_distances = palette_discriminability(
+        [*role_colors, empty_cell_color, background_color]
+    )
+    expected_contrasts = [
+        contrast_ratio(color, background_color)
+        for color in [*role_colors, empty_cell_color]
+    ]
+    assert result.score == pytest.approx(
+        color_discriminability_score(
+            role_colors,
+            empty_cell_color,
+            background_color,
+        )
+    )
+    assert result.min_delta_e == pytest.approx(
+        expected_distances["min_delta_e"]
+    )
+    assert result.mean_delta_e == pytest.approx(
+        expected_distances["mean_delta_e"]
+    )
+    assert result.max_delta_e == pytest.approx(
+        expected_distances["max_delta_e"]
+    )
+    assert result.min_contrast_ratio == pytest.approx(min(expected_contrasts))
+    assert result.mean_contrast_ratio == pytest.approx(np.mean(expected_contrasts))
+    assert result.max_contrast_ratio == pytest.approx(max(expected_contrasts))
+
+
 def test_role_palette_matches_visualization_color_cycling():
     assert role_palette(["#111111", "#222222"], 5) == [
         "#111111",
@@ -241,7 +282,6 @@ def test_evaluate_current_ordering_smoke():
     )
     result = evaluate_current_ordering(
         matrix,
-        palette=["#E68A75", "#75E68A"],
     )
     assert result.variant == ORDERING_VARIANT_CURRENT
     assert result.resource_count == 2
@@ -250,16 +290,35 @@ def test_evaluate_current_ordering_smoke():
     assert result.density == 0.5
     assert 0.0 <= result.blockiness <= 1.0
     assert 0.0 <= result.row_coherence <= 1.0
-    assert 0.0 <= result.color_discriminability <= 1.0
 
 
-def test_evaluate_ordering_variants_bundle_shape():
+def test_evaluate_ordering_variants_bundle_shape(monkeypatch):
     matrix = resource_role_matrix_from_mapping(
         resources=["Alice", "Bob"],
         roles=["Buyer", "Approver"],
         mapping=[[True, False], [False, True]],
     )
+    color_evaluation_calls = 0
+
+    def track_color_evaluation(
+        role_colors: list[str],
+        empty_cell_color: str,
+        background_color: str,
+    ):
+        nonlocal color_evaluation_calls
+        color_evaluation_calls += 1
+        return evaluate_color_discriminability(
+            role_colors,
+            empty_cell_color,
+            background_color,
+        )
+
+    monkeypatch.setattr(
+        "evaluation.evaluate.evaluate_color_discriminability",
+        track_color_evaluation,
+    )
     bundle = evaluate_ordering_variants(matrix, palette=["#E68A75", "#75E68A"])
+    assert color_evaluation_calls == 1
     assert set(bundle.orderings) == {
         ORDERING_VARIANT_CURRENT,
         ORDERING_VARIANT_ALPHABETICAL,
@@ -273,12 +332,22 @@ def test_evaluate_ordering_variants_bundle_shape():
     assert payload["role_count"] == 2
     assert payload["filled_cells"] == 2
     assert payload["density"] == 0.5
-    assert 0.0 <= payload["color_discriminability"] <= 1.0
+    assert 0.0 <= payload["color_discriminability"]["score"] <= 1.0
+    assert payload["color_discriminability"]["min_delta_e"] >= 0.0
+    assert payload["color_discriminability"]["mean_delta_e"] >= 0.0
+    assert payload["color_discriminability"]["max_delta_e"] >= 0.0
+    assert payload["color_discriminability"]["min_contrast_ratio"] >= 1.0
+    assert payload["color_discriminability"]["mean_contrast_ratio"] >= 1.0
+    assert payload["color_discriminability"]["max_contrast_ratio"] >= 1.0
     assert "orderings" in payload
     assert "random_baselines" in payload
     assert ORDERING_VARIANT_CURRENT in payload["orderings"]
     assert "resource_count" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
     assert "density" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+    assert (
+        "color_discriminability"
+        not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+    )
     assert "min_delta_e" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
 
 
@@ -315,7 +384,6 @@ def test_resource_role_matrix_evaluation_response_contract():
             row_fragmentation=1.0,
             column_fragmentation=1.0,
             blockiness=1.0,
-            color_discriminability=0.75,
         )
         for variant in (
             ORDERING_VARIANT_CURRENT,
@@ -326,6 +394,15 @@ def test_resource_role_matrix_evaluation_response_contract():
     }
     payload = ResourceRoleMatrixEvaluationModel(
         evaluations=ResourceRoleMatrixEvaluations(
+            color_discriminability=ResourceRoleMatrixColorDiscriminability(
+                score=0.75,
+                min_delta_e=12.0,
+                mean_delta_e=30.0,
+                max_delta_e=50.0,
+                min_contrast_ratio=2.0,
+                mean_contrast_ratio=4.0,
+                max_contrast_ratio=7.0,
+            ),
             orderings=fixed_orderings,
             random_baselines=[
                 ResourceRoleMatrixQualityEvaluation(
@@ -336,7 +413,6 @@ def test_resource_role_matrix_evaluation_response_contract():
                     row_fragmentation=1.0,
                     column_fragmentation=1.0,
                     blockiness=0.0,
-                    color_discriminability=0.75,
                 )
                 for seed in range(100)
             ],
@@ -349,9 +425,6 @@ def test_resource_role_matrix_evaluation_response_contract():
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "blockiness": ResourceRoleMatrixMetricBound(
-                lower=0.0, upper=1.0, higher_is_better=True
-            ),
-            "color_discriminability": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "row_fragmentation": ResourceRoleMatrixMetricBound(
@@ -408,10 +481,14 @@ def test_resource_role_matrix_evaluation_response_contract():
         "higher_is_better": True,
     }
     assert payload["metric_bounds"]["row_fragmentation"]["higher_is_better"] is False
-    assert payload["metric_bounds"]["color_discriminability"] == {
-        "lower": 0.0,
-        "upper": 1.0,
-        "higher_is_better": True,
+    assert payload["evaluations"]["color_discriminability"] == {
+        "score": 0.75,
+        "min_delta_e": 12.0,
+        "mean_delta_e": 30.0,
+        "max_delta_e": 50.0,
+        "min_contrast_ratio": 2.0,
+        "mean_contrast_ratio": 4.0,
+        "max_contrast_ratio": 7.0,
     }
     assert len(payload["evaluations"]["random_baselines"]) == 100
     assert payload["evaluations"]["random_baselines"][99]["variant"] == "random_99"
@@ -426,7 +503,6 @@ def test_resource_role_matrix_evaluation_response_contract():
         "row_fragmentation": 1.0,
         "column_fragmentation": 1.0,
         "blockiness": 1.0,
-        "color_discriminability": 0.75,
     }
     assert "resource_count" not in current_evaluation
     assert "density" not in current_evaluation

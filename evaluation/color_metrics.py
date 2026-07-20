@@ -1,11 +1,29 @@
 """Color discriminability metrics for matrix visual encoding."""
 
+from dataclasses import asdict, dataclass
+
 from itertools import combinations
 
 import numpy as np
 from skimage.color import deltaE_ciede2000, rgb2lab
 
 DEFAULT_FULL_DISCRIMINATION_DELTA_E = 20.0
+
+
+@dataclass(frozen=True)
+class ColorDiscriminabilityResult:
+    """Order-independent color checks for one matrix visualization."""
+
+    score: float
+    min_delta_e: float
+    mean_delta_e: float
+    max_delta_e: float
+    min_contrast_ratio: float
+    mean_contrast_ratio: float
+    max_contrast_ratio: float
+
+    def to_dict(self) -> dict[str, float]:
+        return asdict(self)
 
 
 def hex_to_rgb01(hex_color: str) -> tuple[float, float, float]:
@@ -99,4 +117,42 @@ def color_discriminability_score(
     return float(
         len(normalized_distances)
         / sum(1.0 / distance for distance in normalized_distances)
+    )
+
+
+def evaluate_color_discriminability(
+    role_colors: list[str],
+    empty_cell_color: str,
+    background_color: str,
+) -> ColorDiscriminabilityResult:
+    """Evaluate visible-color differences and background contrast once.
+
+    CIEDE2000 distances cover all colors visible in the matrix. WCAG contrast
+    ratios compare every cell color with the configured background. Contrast
+    is used as an accessibility-oriented design proxy, not as a claim that
+    categorical matrix colors meet WCAG text requirements.
+    """
+    visible_colors = [*role_colors, empty_cell_color, background_color]
+    color_distances = palette_discriminability(visible_colors)
+    cell_colors = [*role_colors, empty_cell_color]
+    contrast_values = [
+        contrast_ratio(color, background_color) for color in cell_colors
+    ]
+
+    return ColorDiscriminabilityResult(
+        score=color_discriminability_score(
+            role_colors,
+            empty_cell_color,
+            background_color,
+        ),
+        **color_distances,
+        min_contrast_ratio=(
+            float(np.min(contrast_values)) if contrast_values else 0.0
+        ),
+        mean_contrast_ratio=(
+            float(np.mean(contrast_values)) if contrast_values else 0.0
+        ),
+        max_contrast_ratio=(
+            float(np.max(contrast_values)) if contrast_values else 0.0
+        ),
     )
