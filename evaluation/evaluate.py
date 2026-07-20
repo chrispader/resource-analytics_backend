@@ -19,14 +19,14 @@ from evaluation.metrics import (
 DEFAULT_BACKGROUND_COLOR = "#ffffff"
 DEFAULT_EMPTY_CELL_COLOR = "#ededed"
 
-ORDERING_VARIANT_CURRENT = "current"
+ORDERING_VARIANT_ROW_DEGREE = "row_degree"
 ORDERING_VARIANT_ALPHABETICAL = "alphabetical"
 ORDERING_VARIANT_DEGREE = "degree_based"
 ORDERING_VARIANT_SIMILARITY = "similarity_based"
 ORDERING_VARIANT_RANDOM = "random"
 
 ENABLED_ORDERING_VARIANTS = (
-    ORDERING_VARIANT_CURRENT,
+    ORDERING_VARIANT_ROW_DEGREE,
     ORDERING_VARIANT_ALPHABETICAL,
     ORDERING_VARIANT_DEGREE,
     ORDERING_VARIANT_SIMILARITY,
@@ -72,7 +72,7 @@ class MatrixEvaluationResultsBundle:
     """
     Evaluation results for one dataset across matrix orderings.
 
-    orderings: fixed variants (current, degree_based, similarity_based, …).
+    orderings: fixed variants (row_degree, degree_based, similarity_based, …).
     random_baselines: repeated random orderings (one result per seed); empty until enabled.
     """
 
@@ -81,7 +81,7 @@ class MatrixEvaluationResultsBundle:
     random_baselines: tuple[MatrixEvaluationResult, ...] = ()
 
     def to_dict(self) -> dict:
-        reference = self.orderings[ORDERING_VARIANT_CURRENT]
+        reference = self.orderings[ORDERING_VARIANT_ROW_DEGREE]
         return {
             "resource_count": reference.resource_count,
             "role_count": reference.role_count,
@@ -113,7 +113,7 @@ def build_ordering_variants(base_matrix: ResourceRoleMatrix) -> dict[str, Resour
     )
 
     return {
-        ORDERING_VARIANT_CURRENT: base_matrix,
+        ORDERING_VARIANT_ROW_DEGREE: base_matrix,
         ORDERING_VARIANT_ALPHABETICAL: alphabetical_ordering(base_matrix),
         ORDERING_VARIANT_DEGREE: degree_based_ordering(base_matrix),
         ORDERING_VARIANT_SIMILARITY: similarity_based_ordering(base_matrix),
@@ -171,7 +171,7 @@ def evaluate_ordering_variants(
 def evaluate_resource_role_matrix(
     matrix: ResourceRoleMatrix,
     *,
-    variant: str = ORDERING_VARIANT_CURRENT,
+    variant: str = ORDERING_VARIANT_ROW_DEGREE,
     seed: int | None = None,
 ) -> MatrixEvaluationResult:
     """
@@ -195,12 +195,12 @@ def evaluate_resource_role_matrix(
     )
 
 
-def evaluate_current_ordering(
+def evaluate_row_degree_ordering(
     matrix: ResourceRoleMatrix,
 ) -> MatrixEvaluationResult:
-    """Evaluate the visualization's current resource/role order."""
+    """Evaluate the row-degree order used by the matrix visualization."""
     return evaluate_resource_role_matrix(
         matrix,
-        variant=ORDERING_VARIANT_CURRENT,
+        variant=ORDERING_VARIANT_ROW_DEGREE,
         seed=None,
     )

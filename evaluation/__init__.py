@@ -7,7 +7,7 @@ from evaluation.color_metrics import (
 from evaluation.evaluate import (
     MatrixEvaluationResult,
     MatrixEvaluationResultsBundle,
-    evaluate_current_ordering,
+    evaluate_row_degree_ordering,
     evaluate_ordering_variants,
     evaluate_resource_role_matrix,
 )
@@ -26,7 +26,7 @@ __all__ = [
     "HeuristicReport",
     "PUBLISHED_HEURISTIC_RULES",
     "ResourceRoleMatrix",
-    "evaluate_current_ordering",
+    "evaluate_row_degree_ordering",
     "evaluate_color_discriminability",
     "evaluate_ordering_variants",
     "evaluate_resource_role_matrix",

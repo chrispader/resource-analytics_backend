@@ -77,7 +77,7 @@ class ResourceRoleMatrixEvaluations(BaseModel):
     Quality metrics grouped by ordering variant.
 
     color_discriminability: order-independent checks for the visible colors.
-    orderings: named variants (e.g. current, degree_based, similarity_based).
+    orderings: named variants (e.g. row_degree, degree_based, similarity_based).
     random_baselines: optional list of metrics from repeated random orderings.
     """
 
@@ -1125,7 +1125,7 @@ def resource_role_matrix(df):
 
     return ResourceRoleMatrixOutputModel(
         table=matrix_data.table,
-        plot=json.dumps(plots["current"]),
+        plot=json.dumps(plots["row_degree"]),
         plots=plots,
         nodes=ctx.nodes,
         edges=ctx.edges,
@@ -1136,7 +1136,10 @@ def resource_role_matrix(df):
 def evaluate_resource_role_matrix_quality(
     matrix_data: ResourceRoleMatrixData,
 ) -> tuple[ResourceRoleMatrixEvaluations, "MatrixEvaluationResult"]:
-    from evaluation.evaluate import ORDERING_VARIANT_CURRENT, evaluate_ordering_variants
+    from evaluation.evaluate import (
+        ORDERING_VARIANT_ROW_DEGREE,
+        evaluate_ordering_variants,
+    )
     from evaluation.matrix_model import resource_role_matrix_from_mapping
 
     matrix_model = resource_role_matrix_from_mapping(
@@ -1165,7 +1168,7 @@ def evaluate_resource_role_matrix_quality(
             for result in bundle.random_baselines
         ],
     )
-    return evaluations, bundle.orderings[ORDERING_VARIANT_CURRENT]
+    return evaluations, bundle.orderings[ORDERING_VARIANT_ROW_DEGREE]
 
 
 def resource_role_figure_for_matrix(
@@ -1256,7 +1259,7 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
         },
         plots=plots,
         heuristic_report=PlotlyHeuristicReportModel(
-            **evaluate_plotly_figure(plots["current"]).to_dict()
+            **evaluate_plotly_figure(plots["row_degree"]).to_dict()
         ),
     )
 

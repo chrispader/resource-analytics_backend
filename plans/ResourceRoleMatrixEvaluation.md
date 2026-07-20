@@ -19,7 +19,7 @@ The evaluation should not claim that the visualization is universally “good”
 Implement a Python-based evaluation suite for the Resource × Role Matrix that can:
 
 1. Build or receive a clean matrix data model independent from Plotly.
-2. Evaluate matrix quality metrics for the current ordering.
+2. Evaluate matrix quality metrics for the row-degree ordering.
 3. Optionally evaluate alternative row/column orderings.
 4. Evaluate color discriminability of the visual encoding.
 5. Export results as CSV and/or JSON for thesis documentation.
@@ -484,7 +484,7 @@ Implement ordering helpers in `ordering.py` so that matrix variants can be compa
 
 At minimum evaluate:
 
-1. Current ordering.
+1. Row-degree ordering, with resources sorted by their number of roles.
 2. Degree-based ordering.
 3. Similarity-based ordering.
 4. Random baseline ordering with fixed seeds.
@@ -670,7 +670,7 @@ def evaluate_matrix_variants(
     results = []
 
     variants = {
-        "current": matrix,
+        "row_degree": matrix,
         "degree_based": degree_based_ordering(matrix),
         "similarity_based": similarity_based_ordering(matrix),
     }
@@ -825,7 +825,7 @@ Do not report only one metric value. Always compare against alternatives.
 
 Minimum baselines:
 
-1. Current ordering.
+1. Row-degree ordering.
 2. Degree-based ordering.
 3. Similarity-based ordering.
 4. Random ordering baseline with repeated seeds.
@@ -912,7 +912,7 @@ The coding agent should produce:
    - CIEDE2000 Delta E,
    - optional color-vision deficiency simulation.
 4. Ordering functions for:
-   - current ordering,
+   - row-degree ordering,
    - degree-based ordering,
    - similarity-based ordering,
    - random baseline ordering.
@@ -982,4 +982,3 @@ Do not implement the following unless explicitly requested later:
 - Complex optimal matrix reordering algorithms.
 - Claims of universal visualization quality.
 - Automatic thesis writing.
-

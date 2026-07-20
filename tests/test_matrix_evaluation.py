@@ -13,11 +13,11 @@ from evaluation.color_metrics import (
 )
 from evaluation.evaluate import (
     ORDERING_VARIANT_ALPHABETICAL,
-    ORDERING_VARIANT_CURRENT,
     ORDERING_VARIANT_DEGREE,
+    ORDERING_VARIANT_ROW_DEGREE,
     ORDERING_VARIANT_SIMILARITY,
-    evaluate_current_ordering,
     evaluate_ordering_variants,
+    evaluate_row_degree_ordering,
     random_ordering_variant_key,
     role_palette,
 )
@@ -274,16 +274,16 @@ def test_role_palette_matches_visualization_color_cycling():
     ]
 
 
-def test_evaluate_current_ordering_smoke():
+def test_evaluate_row_degree_ordering_smoke():
     matrix = resource_role_matrix_from_mapping(
         resources=["Alice", "Bob"],
         roles=["Buyer", "Approver"],
         mapping=[[True, False], [False, True]],
     )
-    result = evaluate_current_ordering(
+    result = evaluate_row_degree_ordering(
         matrix,
     )
-    assert result.variant == ORDERING_VARIANT_CURRENT
+    assert result.variant == ORDERING_VARIANT_ROW_DEGREE
     assert result.resource_count == 2
     assert result.role_count == 2
     assert result.filled_cells == 2
@@ -320,12 +320,15 @@ def test_evaluate_ordering_variants_bundle_shape(monkeypatch):
     bundle = evaluate_ordering_variants(matrix, palette=["#E68A75", "#75E68A"])
     assert color_evaluation_calls == 1
     assert set(bundle.orderings) == {
-        ORDERING_VARIANT_CURRENT,
+        ORDERING_VARIANT_ROW_DEGREE,
         ORDERING_VARIANT_ALPHABETICAL,
         ORDERING_VARIANT_DEGREE,
         ORDERING_VARIANT_SIMILARITY,
     }
-    assert bundle.orderings[ORDERING_VARIANT_CURRENT].variant == ORDERING_VARIANT_CURRENT
+    assert (
+        bundle.orderings[ORDERING_VARIANT_ROW_DEGREE].variant
+        == ORDERING_VARIANT_ROW_DEGREE
+    )
     assert bundle.random_baselines == ()
     payload = bundle.to_dict()
     assert payload["resource_count"] == 2
@@ -341,14 +344,14 @@ def test_evaluate_ordering_variants_bundle_shape(monkeypatch):
     assert payload["color_discriminability"]["max_contrast_ratio"] >= 1.0
     assert "orderings" in payload
     assert "random_baselines" in payload
-    assert ORDERING_VARIANT_CURRENT in payload["orderings"]
-    assert "resource_count" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
-    assert "density" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+    assert ORDERING_VARIANT_ROW_DEGREE in payload["orderings"]
+    assert "resource_count" not in payload["orderings"][ORDERING_VARIANT_ROW_DEGREE]
+    assert "density" not in payload["orderings"][ORDERING_VARIANT_ROW_DEGREE]
     assert (
         "color_discriminability"
-        not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+        not in payload["orderings"][ORDERING_VARIANT_ROW_DEGREE]
     )
-    assert "min_delta_e" not in payload["orderings"][ORDERING_VARIANT_CURRENT]
+    assert "min_delta_e" not in payload["orderings"][ORDERING_VARIANT_ROW_DEGREE]
 
 
 def test_evaluate_ordering_variants_random_baseline_count_and_seeds():
@@ -386,7 +389,7 @@ def test_resource_role_matrix_evaluation_response_contract():
             blockiness=1.0,
         )
         for variant in (
-            ORDERING_VARIANT_CURRENT,
+            ORDERING_VARIANT_ROW_DEGREE,
             ORDERING_VARIANT_ALPHABETICAL,
             ORDERING_VARIANT_DEGREE,
             ORDERING_VARIANT_SIMILARITY,
@@ -437,7 +440,7 @@ def test_resource_role_matrix_evaluation_response_contract():
         plots={
             variant: {"data": [], "layout": {}}
             for variant in (
-                ORDERING_VARIANT_CURRENT,
+                ORDERING_VARIANT_ROW_DEGREE,
                 ORDERING_VARIANT_ALPHABETICAL,
                 ORDERING_VARIANT_DEGREE,
                 ORDERING_VARIANT_SIMILARITY,
@@ -469,7 +472,7 @@ def test_resource_role_matrix_evaluation_response_contract():
         "heuristic_report",
     }
     assert set(payload["plots"]) == {
-        ORDERING_VARIANT_CURRENT,
+        ORDERING_VARIANT_ROW_DEGREE,
         ORDERING_VARIANT_ALPHABETICAL,
         ORDERING_VARIANT_DEGREE,
         ORDERING_VARIANT_SIMILARITY,
@@ -494,9 +497,11 @@ def test_resource_role_matrix_evaluation_response_contract():
     assert payload["evaluations"]["random_baselines"][99]["variant"] == "random_99"
     assert payload["evaluations"]["random_baselines"][99]["seed"] == 99
 
-    current_evaluation = payload["evaluations"]["orderings"][ORDERING_VARIANT_CURRENT]
-    assert current_evaluation == {
-        "variant": ORDERING_VARIANT_CURRENT,
+    row_degree_evaluation = payload["evaluations"]["orderings"][
+        ORDERING_VARIANT_ROW_DEGREE
+    ]
+    assert row_degree_evaluation == {
+        "variant": ORDERING_VARIANT_ROW_DEGREE,
         "seed": None,
         "row_coherence": 1.0,
         "column_coherence": 1.0,
@@ -504,9 +509,9 @@ def test_resource_role_matrix_evaluation_response_contract():
         "column_fragmentation": 1.0,
         "blockiness": 1.0,
     }
-    assert "resource_count" not in current_evaluation
-    assert "density" not in current_evaluation
-    assert "min_delta_e" not in current_evaluation
+    assert "resource_count" not in row_degree_evaluation
+    assert "density" not in row_degree_evaluation
+    assert "min_delta_e" not in row_degree_evaluation
     assert payload["heuristic_report"]["findings"][0]["rule_id"] == "plot-title"
 
 
@@ -522,13 +527,13 @@ def test_resource_role_matrix_response_includes_all_ordering_plots():
     payload = resource_role_matrix(dataframe).model_dump()
 
     assert set(payload["plots"]) == {
-        ORDERING_VARIANT_CURRENT,
+        ORDERING_VARIANT_ROW_DEGREE,
         ORDERING_VARIANT_ALPHABETICAL,
         ORDERING_VARIANT_DEGREE,
         ORDERING_VARIANT_SIMILARITY,
         "random_0",
     }
-    assert json.loads(payload["plot"]) == payload["plots"][ORDERING_VARIANT_CURRENT]
+    assert json.loads(payload["plot"]) == payload["plots"][ORDERING_VARIANT_ROW_DEGREE]
 
 
 def test_resource_role_matrix_evaluation_includes_plotly_heuristic_report():
