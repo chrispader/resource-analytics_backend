@@ -185,6 +185,9 @@ custom_palette_1 = [
     "#a7e8de"
 ]
 
+# The matrix's original design uses these five qualitative role colors.
+RESOURCE_ROLE_MATRIX_PALETTE = custom_palette_1[:5]
+
 custom_palette_2 = [
     "#758AE6",
     "#E675A3",
@@ -522,19 +525,22 @@ def resource_roles(df):
 
 def _resource_role_matrix_colorscale(n_roles: int, palette: list[str]) -> list[list]:
     """Piecewise scale for z in 0..n_roles: 0 = empty cell, k>0 = role column color."""
+    from evaluation.evaluate import role_palette
+
     light_gray = "#ededed"
-    if n_roles <= 0:
+    role_colors = role_palette(palette, n_roles)
+    if not role_colors:
         return [[0, light_gray], [1, light_gray]]
 
     scale: list[list] = [[0, light_gray], [0.5 / n_roles, light_gray]]
     for k in range(1, n_roles + 1):
-        color = palette[(k - 1) % len(palette)]
+        color = role_colors[k - 1]
         t_mid = (k - 0.5) / n_roles
         t_end = k / n_roles
         scale.append([t_mid, color])
         scale.append([t_end, color])
     if scale[-1][0] < 1.0:
-        scale.append([1.0, palette[(n_roles - 1) % len(palette)]])
+        scale.append([1.0, role_colors[-1]])
     return scale
 
 
@@ -714,7 +720,10 @@ def build_resource_role_matrix_figure(ctx: ResourceRoleMatrixContext) -> go.Figu
             ],
         )
     else:
-        palette = custom_palette_1
+        from evaluation.evaluate import role_palette
+
+        palette = RESOURCE_ROLE_MATRIX_PALETTE
+        role_colors = role_palette(palette, n_roles)
         per_role_count = [int(resources_per_role_counts.get(r, 0)) for r in roles_sorted]
         roles_count_per_res = [int(roles_per_resource_counts.get(r, 0)) for r in resources_sorted]
         max_role_count = max(roles_count_per_res) if roles_count_per_res else 1
@@ -774,7 +783,7 @@ def build_resource_role_matrix_figure(ctx: ResourceRoleMatrixContext) -> go.Figu
         matrix_col_gap = 0.02
         matrix_col_width = 1.0 - (2 * matrix_col_gap)
         for j, role in enumerate(roles_sorted):
-            role_color = palette[j % len(palette)]
+            role_color = role_colors[j]
             legendgroup = f"role:{role}"
             cell_colors = []
             cell_hover = []
@@ -1149,7 +1158,7 @@ def evaluate_resource_role_matrix_quality(
     )
     bundle = evaluate_ordering_variants(
         matrix_model,
-        palette=custom_palette_1,
+        palette=RESOURCE_ROLE_MATRIX_PALETTE,
         include_random_baselines=True,
         random_seed_count=100,
     )

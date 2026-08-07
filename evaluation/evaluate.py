@@ -99,9 +99,16 @@ class MatrixEvaluationResultsBundle:
 
 
 def role_palette(palette: list[str], role_count: int) -> list[str]:
+    """Return role colors without cycling a qualitative palette.
+
+    Once there are more roles than distinct palette entries, column position and
+    labels identify roles and one shared assignment color represents filled cells.
+    """
     if role_count <= 0 or not palette:
         return []
-    return [palette[index % len(palette)] for index in range(role_count)]
+    if role_count <= len(palette):
+        return palette[:role_count]
+    return [palette[0]] * role_count
 
 
 def build_ordering_variants(base_matrix: ResourceRoleMatrix) -> dict[str, ResourceRoleMatrix]:
@@ -133,8 +140,9 @@ def evaluate_ordering_variants(
     Evaluate all enabled ordering variants. Random baselines are optional (off by default).
     """
     role_colors = role_palette(palette, len(base_matrix.roles))
+    distinct_role_colors = list(dict.fromkeys(role_colors))
     color_evaluation = evaluate_color_discriminability(
-        role_colors,
+        distinct_role_colors,
         empty_cell_color,
         background_color,
     )

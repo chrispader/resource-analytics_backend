@@ -41,6 +41,10 @@ from pm import (
     ResourceRoleMatrixEvaluations,
     ResourceRoleMatrixMetricBound,
     ResourceRoleMatrixQualityEvaluation,
+    RESOURCE_ROLE_MATRIX_PALETTE,
+    _resource_role_matrix_colorscale,
+    build_resource_role_matrix_figure,
+    compute_resource_role_matrix_context,
     resource_role_matrix,
     resource_role_matrix_evaluation,
 )
@@ -271,14 +275,74 @@ def test_evaluate_color_discriminability_reports_color_distance_and_contrast():
     assert result.max_contrast_ratio == pytest.approx(max(expected_contrasts))
 
 
-def test_role_palette_matches_visualization_color_cycling():
-    assert role_palette(["#111111", "#222222"], 5) == [
+def test_role_palette_uses_distinct_colors_when_the_palette_is_large_enough():
+    assert role_palette(["#111111", "#222222", "#333333"], 2) == [
         "#111111",
         "#222222",
-        "#111111",
-        "#222222",
-        "#111111",
     ]
+
+
+def test_role_palette_uses_one_assignment_color_instead_of_cycling():
+    assert role_palette(["#111111", "#222222"], 5) == ["#111111"] * 5
+
+
+def test_resource_role_colorscale_uses_shared_assignment_color_for_many_roles():
+    colorscale = _resource_role_matrix_colorscale(3, ["#111111", "#222222"])
+    filled_colors = {color for position, color in colorscale if position > 1 / 6}
+    assert filled_colors == {"#111111"}
+
+
+def test_matrix_figure_preserves_five_role_palette_and_falls_back_above_it():
+    five_role_df = pd.DataFrame(
+        {
+            "Resource": ["Alice"] * 5,
+            "Role": [f"Role {index}" for index in range(5)],
+            "Activity": ["Work"] * 5,
+        }
+    )
+    six_role_df = pd.DataFrame(
+        {
+            "Resource": ["Alice"] * 6,
+            "Role": [f"Role {index}" for index in range(6)],
+            "Activity": ["Work"] * 6,
+        }
+    )
+
+    five_role_figure = build_resource_role_matrix_figure(
+        compute_resource_role_matrix_context(five_role_df)
+    )
+    six_role_figure = build_resource_role_matrix_figure(
+        compute_resource_role_matrix_context(six_role_df)
+    )
+    five_role_legend_colors = [
+        trace.marker.color
+        for trace in five_role_figure.data
+        if trace.type == "scatter" and trace.showlegend
+    ]
+    six_role_legend_colors = [
+        trace.marker.color
+        for trace in six_role_figure.data
+        if trace.type == "scatter" and trace.showlegend
+    ]
+
+    assert five_role_legend_colors == RESOURCE_ROLE_MATRIX_PALETTE
+    assert six_role_legend_colors == [RESOURCE_ROLE_MATRIX_PALETTE[0]] * 6
+
+
+def test_color_evaluation_treats_many_role_fallback_as_three_visible_states():
+    matrix = resource_role_matrix_from_mapping(
+        resources=["Alice"],
+        roles=[f"Role {index}" for index in range(6)],
+        mapping=[[True] * 6],
+    )
+    bundle = evaluate_ordering_variants(matrix, palette=RESOURCE_ROLE_MATRIX_PALETTE)
+    expected = evaluate_color_discriminability(
+        [RESOURCE_ROLE_MATRIX_PALETTE[0]],
+        "#ededed",
+        "#ffffff",
+    )
+
+    assert bundle.color_discriminability == expected
 
 
 def test_evaluate_row_degree_ordering_smoke():
