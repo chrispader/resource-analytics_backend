@@ -40,6 +40,7 @@ from experiments.role_matrix.generate import (
     MIN_GROUP_SEPARATION,
     PROFILE_DIVERSITY_TARGETS,
     PROFILE_DIVERSITY_TOLERANCE,
+    _degree_group_cramers_v,
     _group_jaccard_separation,
     _normalized_entropy,
     _normalized_profile_entropy,
@@ -317,6 +318,7 @@ def _validate_log_against_manifest(
         "degree_standard_deviation": degree_standard_deviation,
         "degree_coefficient_of_variation": degree_standard_deviation / degree_mean,
         "normalized_degree_entropy": _normalized_entropy(degrees),
+        "degree_group_cramers_v": _degree_group_cramers_v(degrees, groups),
         "within_group_jaccard": within_jaccard,
         "between_group_jaccard": between_jaccard,
         "group_jaccard_separation": separation,
@@ -677,6 +679,9 @@ def evaluate_experiment(
                 ),
                 "normalized_degree_entropy": float(
                     manifest_row["normalized_degree_entropy"]
+                ),
+                "degree_group_cramers_v": float(
+                    manifest_row["degree_group_cramers_v"]
                 ),
                 "within_group_jaccard": float(manifest_row["within_group_jaccard"]),
                 "between_group_jaccard": float(manifest_row["between_group_jaccard"]),

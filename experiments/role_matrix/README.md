@@ -28,6 +28,16 @@ the realized proportions are not claimed to remain 25/50/25. The manifest
 records the exact distribution summaries, and the generator guarantees only
 that the final distribution is non-degenerate and has the requested assignment
 total.
+Resource-to-group assignment, degree placement within groups, and profile
+placement use separately salted deterministic random streams. This prevents the
+alphabetical resource identifier from carrying the planted degree or profile
+order. Each exact degree value is also stratified across the three planted
+groups, so its group counts differ by at most one. The manifest records
+Cramér's V for the realized degree-by-group table. The exhaustive design test
+requires mean alphabetical degree-order agreement across all 405 logs to stay
+between 0.45 and 0.55, checks every full factor cell across its five seed
+blocks, bounds degree/group association and alphabetical group contiguity, and
+compares alphabetical profile coherence with an independently shuffled order.
 
 Diversity is controlled along the deterministic generator's tested
 profile-count path for each fixed condition. The first generated assignment on

@@ -65,6 +65,7 @@ class GeneratedDataset:
     degree_standard_deviation: float
     degree_coefficient_of_variation: float
     normalized_degree_entropy: float
+    degree_group_cramers_v: float
     within_group_jaccard: float
     between_group_jaccard: float
     group_jaccard_separation: float
@@ -104,6 +105,9 @@ class GeneratedDataset:
                 "normalized_degree_entropy": round(
                     self.normalized_degree_entropy, 8
                 ),
+                "degree_group_cramers_v": round(
+                    self.degree_group_cramers_v, 8
+                ),
                 "within_group_jaccard": round(self.within_group_jaccard, 8),
                 "between_group_jaccard": round(self.between_group_jaccard, 8),
                 "group_jaccard_separation": round(
@@ -126,6 +130,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, object]:
             "profile_diversity_tolerance": PROFILE_DIVERSITY_TOLERANCE,
             "minimum_group_jaccard_separation": MIN_GROUP_SEPARATION,
             "degree_band_proportions": [0.25, 0.50, 0.25],
+            "degree_group_stratification_max_count_difference": 1,
         }
         if design != expected:
             raise ValueError(
@@ -135,9 +140,13 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, object]:
 
 
 def _condition_seed(condition: DatasetCondition) -> int:
+    return _salted_condition_seed(condition, "condition")
+
+
+def _salted_condition_seed(condition: DatasetCondition, salt: str) -> int:
     key = (
         f"{condition.resource_count}:{condition.role_count}:"
-        f"{condition.target_density:.4f}:{condition.seed}"
+        f"{condition.target_density:.4f}:{condition.seed}:{salt}"
     )
     return int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big")
 
@@ -194,30 +203,51 @@ def _row_degrees(condition: DatasetCondition, groups: Sequence[int]) -> list[int
     if len(set(degrees)) < 2 or max(degrees) - min(degrees) < 1:
         raise RuntimeError(f"Could not create a non-degenerate degree distribution: {condition}")
 
-    rng = random.Random(_condition_seed(condition))
-    rng.shuffle(degrees)
     indices_by_group: dict[int, list[int]] = defaultdict(list)
     for resource_index, group in enumerate(groups):
         indices_by_group[group].append(resource_index)
+    for group, indices in indices_by_group.items():
+        random.Random(
+            _salted_condition_seed(condition, f"degree-placement:{group}")
+        ).shuffle(indices)
     assigned = [0] * condition.resource_count
-    group_totals = {group: 0 for group in indices_by_group}
-    group_offsets = {group: 0 for group in indices_by_group}
-    for degree in sorted(degrees, reverse=True):
-        group = min(
-            indices_by_group,
-            key=lambda candidate: (
-                group_totals[candidate] / max(1, group_offsets[candidate]),
-                group_offsets[candidate],
-                candidate,
-            ),
-        )
-        indices = indices_by_group[group]
-        resource_index = indices[group_offsets[group]]
-        assigned[resource_index] = degree
-        group_offsets[group] += 1
-        group_totals[group] += degree
-        if group_offsets[group] == len(indices):
-            del indices_by_group[group]
+    remaining_capacity = {
+        group: len(indices)
+        for group, indices in indices_by_group.items()
+    }
+    degrees_by_group = {group: [] for group in indices_by_group}
+    degree_counts = Counter(degrees)
+    groups_in_order = sorted(indices_by_group)
+    for degree in sorted(degree_counts, reverse=True):
+        count = degree_counts[degree]
+        base_count, remainder = divmod(count, len(groups_in_order))
+        if any(remaining_capacity[group] < base_count for group in groups_in_order):
+            raise RuntimeError("Balanced degree stratification exceeded group capacity")
+        for group in groups_in_order:
+            degrees_by_group[group].extend([degree] * base_count)
+            remaining_capacity[group] -= base_count
+
+        tie_order = list(groups_in_order)
+        random.Random(
+            _salted_condition_seed(condition, f"degree-stratum:{degree}")
+        ).shuffle(tie_order)
+        remainder_groups = sorted(
+            tie_order,
+            key=lambda group: remaining_capacity[group],
+            reverse=True,
+        )[:remainder]
+        for group in remainder_groups:
+            degrees_by_group[group].append(degree)
+            remaining_capacity[group] -= 1
+
+    if any(remaining_capacity.values()):
+        raise RuntimeError("Balanced degree stratification left unassigned resources")
+    for group, indices in indices_by_group.items():
+        group_degrees = degrees_by_group[group]
+        if len(group_degrees) != len(indices):
+            raise RuntimeError("Degree stratum does not match planted-group size")
+        for resource_index, degree in zip(indices, group_degrees):
+            assigned[resource_index] = degree
     return assigned
 
 
@@ -358,7 +388,14 @@ def _assign_profiles(
     ) -> list[tuple[int, ...]]:
         candidate_assignments: list[tuple[int, ...] | None] = [None] * len(degrees)
         for key in sorted(indices_by_group_and_degree):
-            indices = indices_by_group_and_degree[key]
+            indices = list(indices_by_group_and_degree[key])
+            group, degree = key
+            random.Random(
+                _salted_condition_seed(
+                    condition,
+                    f"profile-placement:{group}:{degree}",
+                )
+            ).shuffle(indices)
             templates = pools[key][: counts[key]]
             for offset, resource_index in enumerate(indices):
                 candidate_assignments[resource_index] = templates[offset % len(templates)]
@@ -466,6 +503,34 @@ def _group_jaccard_separation(
     return within_mean, between_mean, within_mean - between_mean
 
 
+def _degree_group_cramers_v(
+    degrees: Sequence[int],
+    groups: Sequence[int],
+) -> float:
+    degree_values = sorted(set(degrees))
+    group_values = sorted(set(groups))
+    if len(degree_values) < 2 or len(group_values) < 2:
+        return 0.0
+    table = {
+        (degree, group): sum(
+            observed_degree == degree and observed_group == group
+            for observed_degree, observed_group in zip(degrees, groups)
+        )
+        for degree in degree_values
+        for group in group_values
+    }
+    total = len(degrees)
+    chi_squared = 0.0
+    for degree in degree_values:
+        row_total = sum(table[(degree, group)] for group in group_values)
+        for group in group_values:
+            column_total = sum(table[(other_degree, group)] for other_degree in degree_values)
+            expected = row_total * column_total / total
+            chi_squared += (table[(degree, group)] - expected) ** 2 / expected
+    denominator = total * min(len(degree_values) - 1, len(group_values) - 1)
+    return math.sqrt(chi_squared / denominator)
+
+
 def _dataset_filename(condition: DatasetCondition) -> str:
     density = str(int(round(condition.target_density * 100))).zfill(2)
     return (
@@ -569,6 +634,7 @@ def generate_dataset(condition: DatasetCondition, output_root: Path) -> Generate
             / degree_mean
         ),
         normalized_degree_entropy=_normalized_entropy(degrees),
+        degree_group_cramers_v=_degree_group_cramers_v(degrees, groups),
         within_group_jaccard=within_jaccard,
         between_group_jaccard=between_jaccard,
         group_jaccard_separation=group_separation,

@@ -1,15 +1,19 @@
 import csv
 import json
+from collections import defaultdict
 from dataclasses import replace
 
+import numpy as np
 import pytest
 
+from evaluation.metrics import degree_order_agreement, neighbor_similarity_coherence
 from experiments.role_matrix.generate import (
     DatasetCondition,
     MIN_GROUP_SEPARATION,
     PROFILE_DIVERSITY_TARGETS,
     PROFILE_DIVERSITY_TOLERANCE,
     _conditions,
+    _degree_group_cramers_v,
     _group_jaccard_separation,
     _profile_groups,
     _row_degrees,
@@ -126,6 +130,14 @@ def test_factorial_workflow_writes_manifest(tmp_path):
 
 def test_all_factorial_conditions_meet_design_invariants():
     matched = {}
+    alphabetical_degree_scores = []
+    degree_scores_by_factor_cell = defaultdict(list)
+    alphabetical_profile_coherence = []
+    shuffled_profile_coherence = []
+    alphabetical_group_contiguity = []
+    group_contiguity_by_factor_cell = defaultdict(list)
+    degree_group_associations = []
+    degree_group_associations_by_factor_cell = defaultdict(list)
     for condition in _conditions(load_config()):
         groups = _profile_groups(condition)
         degrees = _row_degrees(condition, groups)
@@ -149,6 +161,15 @@ def test_all_factorial_conditions_meet_design_invariants():
             >= 2
             for group in set(groups)
         )
+        for degree in set(degrees):
+            counts_by_group = [
+                sum(
+                    observed_degree == degree and observed_group == group
+                    for observed_degree, observed_group in zip(degrees, groups)
+                )
+                for group in sorted(set(groups))
+            ]
+            assert max(counts_by_group) - min(counts_by_group) <= 1
         assert sum(degrees) == round(
             condition.resource_count
             * condition.role_count
@@ -167,6 +188,49 @@ def test_all_factorial_conditions_meet_design_invariants():
         )
         assert 0 <= minimum_entropy <= maximum_entropy <= 1
 
+        matrix = np.zeros(
+            (condition.resource_count, condition.role_count),
+            dtype=np.int8,
+        )
+        for resource_index, profile in enumerate(profiles):
+            matrix[resource_index, list(profile)] = 1
+        degree_score = degree_order_agreement(matrix)
+        alphabetical_degree_scores.append(degree_score)
+        factor_cell = (
+            condition.size,
+            condition.role_count,
+            condition.target_density,
+            condition.profile_diversity,
+        )
+        degree_scores_by_factor_cell[factor_cell].append(degree_score)
+        alphabetical_profile_coherence.append(
+            neighbor_similarity_coherence(matrix)
+        )
+        shuffled_order = np.random.default_rng(condition.seed + 991).permutation(
+            condition.resource_count
+        )
+        shuffled_profile_coherence.append(
+            neighbor_similarity_coherence(matrix[shuffled_order])
+        )
+        positions = defaultdict(list)
+        for position, group in enumerate(groups):
+            positions[group].append(position)
+        group_contiguity = sum(
+            (len(group_positions) / len(groups))
+            * (
+                len(group_positions)
+                / (group_positions[-1] - group_positions[0] + 1)
+            )
+            for group_positions in positions.values()
+        )
+        alphabetical_group_contiguity.append(group_contiguity)
+        group_contiguity_by_factor_cell[factor_cell].append(group_contiguity)
+        degree_group_association = _degree_group_cramers_v(degrees, groups)
+        degree_group_associations.append(degree_group_association)
+        degree_group_associations_by_factor_cell[factor_cell].append(
+            degree_group_association
+        )
+
         key = (
             condition.size,
             condition.resource_count,
@@ -177,3 +241,31 @@ def test_all_factorial_conditions_meet_design_invariants():
         previous = matched.setdefault(key, (groups, degrees))
         assert groups == previous[0]
         assert degrees == previous[1]
+
+    overall_degree_agreement = sum(alphabetical_degree_scores) / len(
+        alphabetical_degree_scores
+    )
+    assert 0.45 <= overall_degree_agreement <= 0.55
+    assert all(
+        0.40 <= sum(scores) / len(scores) <= 0.60
+        for scores in degree_scores_by_factor_cell.values()
+    )
+    alphabetical_mean = sum(alphabetical_profile_coherence) / len(
+        alphabetical_profile_coherence
+    )
+    shuffled_mean = sum(shuffled_profile_coherence) / len(
+        shuffled_profile_coherence
+    )
+    assert abs(alphabetical_mean - shuffled_mean) <= 0.02
+    assert sum(alphabetical_group_contiguity) / len(
+        alphabetical_group_contiguity
+    ) <= 0.40
+    assert all(
+        sum(scores) / len(scores) <= 0.40
+        for scores in group_contiguity_by_factor_cell.values()
+    )
+    assert sum(degree_group_associations) / len(degree_group_associations) <= 0.05
+    assert all(
+        sum(scores) / len(scores) <= 0.08
+        for scores in degree_group_associations_by_factor_cell.values()
+    )

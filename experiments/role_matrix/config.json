@@ -18,6 +18,7 @@
     },
     "profile_diversity_tolerance": 0.12,
     "minimum_group_jaccard_separation": 0.05,
-    "degree_band_proportions": [0.25, 0.50, 0.25]
+    "degree_band_proportions": [0.25, 0.50, 0.25],
+    "degree_group_stratification_max_count_difference": 1
   }
 }
