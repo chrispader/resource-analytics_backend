@@ -62,6 +62,77 @@ def test_title_and_axis_labels_can_pass():
     assert findings["axis-labels"].status == STATUS_PASS
 
 
+def test_hidden_subplot_axes_do_not_require_visible_labels():
+    report = evaluate_plotly_figure(
+        {
+            "data": [
+                {"type": "scatter", "x": [0.5], "y": [1], "xaxis": "x", "yaxis": "y"},
+                {"type": "heatmap", "z": [[1]], "x": [0.5], "y": ["A"], "xaxis": "x2", "yaxis": "y2"},
+                {"type": "bar", "x": [1], "y": ["A"], "xaxis": "x3", "yaxis": "y3"},
+            ],
+            "layout": {
+                "title": "Composite matrix",
+                "xaxis": {"visible": False},
+                "yaxis": {"showticklabels": False},
+                "xaxis2": {"showticklabels": False},
+                "yaxis2": {"showticklabels": False},
+                "xaxis3": {"showticklabels": False},
+                "yaxis3": {"showticklabels": False},
+            },
+        }
+    )
+
+    features, _ = extract_plotly_features(
+        {
+            "data": [
+                {"type": "scatter", "x": [0.5], "y": [1]},
+                {"type": "heatmap", "z": [[1]], "x": [0.5], "y": ["A"], "xaxis": "x2", "yaxis": "y2"},
+            ],
+            "layout": {
+                "xaxis": {"visible": False},
+                "yaxis": {"showticklabels": False},
+                "xaxis2": {"showticklabels": False},
+                "yaxis2": {"showticklabels": False},
+            },
+        }
+    )
+
+    assert findings_by_id(report)["axis-labels"].status == STATUS_PASS
+    assert features.axis_names == ("xaxis", "yaxis", "xaxis2", "yaxis2")
+    assert features.unlabeled_axes == ()
+
+
+def test_numeric_features_respect_each_trace_axis_reference():
+    features, _ = extract_plotly_features(
+        {
+            "data": [
+                {
+                    "type": "scatter",
+                    "x": [1, 100, 10_000],
+                    "y": [1, 2, 3],
+                },
+                {
+                    "type": "bar",
+                    "x": [1, 2, 3, 4, 5],
+                    "y": [10, 20, 30, 40, 50],
+                    "xaxis": "x2",
+                    "yaxis": "y2",
+                },
+            ],
+            "layout": {
+                "xaxis": {"title": "Wide range"},
+                "yaxis": {"title": "First values"},
+                "xaxis2": {"title": "Compact range"},
+                "yaxis2": {"title": "Second values"},
+            },
+        }
+    )
+
+    assert features.numeric_axes == ("xaxis", "yaxis", "xaxis2", "yaxis2")
+    assert features.squeezed_axes == ("xaxis",)
+    assert features.excessive_tick_axes == ("xaxis", "yaxis")
+
+
 def test_more_than_four_colors_is_warning():
     report = evaluate_plotly_figure(
         {

@@ -265,6 +265,18 @@ def _line_trace(trace: Mapping[str, Any]) -> bool:
     return "lines" in mode
 
 
+def _axis_name(trace: Mapping[str, Any], coordinate: str) -> str:
+    """Return the Plotly layout key for a trace's cartesian axis reference."""
+    reference = str(trace.get(f"{coordinate}axis", coordinate))
+    suffix = reference[len(coordinate):] if reference.startswith(coordinate) else ""
+    return f"{coordinate}axis{suffix}"
+
+
+def _axis_is_intentionally_hidden(axis: Mapping[str, Any]) -> bool:
+    """Identify axes whose labels are deliberately replaced by other marks."""
+    return axis.get("visible") is False or axis.get("showticklabels") is False
+
+
 def _has_iqr_outlier(values: list[float]) -> bool:
     if len(values) < 4:
         return False
@@ -306,14 +318,14 @@ def extract_plotly_features(figure: str | Mapping[str, Any] | Any) -> tuple[Plot
         if trace_type not in CARTESIAN_TRACE_TYPES:
             continue
         for coordinate in ("x", "y"):
-            reference = str(trace.get(f"{coordinate}axis", coordinate))
-            axis_name = f"{coordinate}axis{reference[1:]}"
+            axis_name = _axis_name(trace, coordinate)
             if axis_name not in referenced_axes:
                 referenced_axes.append(axis_name)
     axis_names = tuple(referenced_axes)
     unlabeled_axes = tuple(
         axis_name for axis_name in axis_names
-        if not _nonempty_text((layout.get(axis_name) or {}).get("title"))
+        if not _axis_is_intentionally_hidden(layout.get(axis_name) or {})
+        and not _nonempty_text((layout.get(axis_name) or {}).get("title"))
     )
 
     # Plotly serializes whole template palettes even when the figure does not use
@@ -353,10 +365,13 @@ def extract_plotly_features(figure: str | Mapping[str, Any] | Any) -> tuple[Plot
     )
 
     axis_values: dict[str, list[float]] = {}
-    for axis_letter in ("x", "y"):
-        values = [value for trace in traces for value in _numeric_values(trace.get(axis_letter))]
-        if values:
-            axis_values[f"{axis_letter}axis"] = values
+    for trace, trace_type in zip(traces, trace_types):
+        if trace_type not in CARTESIAN_TRACE_TYPES:
+            continue
+        for coordinate in ("x", "y"):
+            values = _numeric_values(trace.get(coordinate))
+            if values:
+                axis_values.setdefault(_axis_name(trace, coordinate), []).extend(values)
     numeric_axes = tuple(axis_values)
 
     excessive_tick_axes = []
