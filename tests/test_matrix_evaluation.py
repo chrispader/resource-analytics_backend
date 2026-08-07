@@ -24,8 +24,8 @@ from evaluation.evaluate import (
 from evaluation.matrix_model import ResourceRoleMatrix, resource_role_matrix_from_mapping
 from evaluation.metrics import (
     average_fragmentation,
-    blockiness,
     count_runs,
+    degree_order_agreement,
     density,
     jaccard_similarity,
     neighbor_similarity_coherence,
@@ -94,25 +94,32 @@ def test_average_fragmentation_empty():
     assert average_fragmentation(np.zeros((0, 3), dtype=int)) == 0.0
 
 
-def test_blockiness_rewards_coherent_blocks():
-    coherent_blocks = np.array(
+def test_degree_order_agreement_accepts_descending_degrees_and_ties():
+    descending = np.array(
         [
-            [1, 1, 0, 0],
-            [1, 1, 0, 0],
-            [0, 0, 1, 1],
-            [0, 0, 1, 1],
+            [1, 1, 1],
+            [1, 1, 0],
+            [0, 1, 1],
+            [1, 0, 0],
         ]
     )
-    checkerboard = np.array(
+    assert degree_order_agreement(descending) == 1.0
+
+
+def test_degree_order_agreement_rejects_reverse_degree_order():
+    ascending = np.array(
         [
-            [1, 0, 1, 0],
-            [0, 1, 0, 1],
-            [1, 0, 1, 0],
-            [0, 1, 0, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 1, 1],
         ]
     )
-    assert blockiness(coherent_blocks) > blockiness(checkerboard)
-    assert blockiness(np.ones((2, 2), dtype=int)) == 1.0
+    assert degree_order_agreement(ascending) == 0.0
+
+
+def test_degree_order_agreement_all_ties_and_single_row():
+    assert degree_order_agreement(np.eye(3, dtype=int)) == 1.0
+    assert degree_order_agreement(np.ones((1, 3), dtype=int)) == 1.0
 
 
 def test_reorder_preserves_shape_and_fill_count():
@@ -288,7 +295,7 @@ def test_evaluate_row_degree_ordering_smoke():
     assert result.role_count == 2
     assert result.filled_cells == 2
     assert result.density == 0.5
-    assert 0.0 <= result.blockiness <= 1.0
+    assert 0.0 <= result.degree_order_agreement <= 1.0
     assert 0.0 <= result.row_coherence <= 1.0
 
 
@@ -386,7 +393,7 @@ def test_resource_role_matrix_evaluation_response_contract():
             column_coherence=1.0,
             row_fragmentation=1.0,
             column_fragmentation=1.0,
-            blockiness=1.0,
+            degree_order_agreement=1.0,
         )
         for variant in (
             ORDERING_VARIANT_ROW_DEGREE,
@@ -415,7 +422,7 @@ def test_resource_role_matrix_evaluation_response_contract():
                     column_coherence=0.0,
                     row_fragmentation=1.0,
                     column_fragmentation=1.0,
-                    blockiness=0.0,
+                    degree_order_agreement=0.0,
                 )
                 for seed in range(100)
             ],
@@ -427,7 +434,7 @@ def test_resource_role_matrix_evaluation_response_contract():
             "column_coherence": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
-            "blockiness": ResourceRoleMatrixMetricBound(
+            "degree_order_agreement": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "row_fragmentation": ResourceRoleMatrixMetricBound(
@@ -507,7 +514,7 @@ def test_resource_role_matrix_evaluation_response_contract():
         "column_coherence": 1.0,
         "row_fragmentation": 1.0,
         "column_fragmentation": 1.0,
-        "blockiness": 1.0,
+        "degree_order_agreement": 1.0,
     }
     assert "resource_count" not in row_degree_evaluation
     assert "density" not in row_degree_evaluation

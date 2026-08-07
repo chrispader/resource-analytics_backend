@@ -59,7 +59,7 @@ class ResourceRoleMatrixQualityEvaluation(BaseModel):
     column_coherence: float
     row_fragmentation: float
     column_fragmentation: float
-    blockiness: float
+    degree_order_agreement: float
 
 
 class ResourceRoleMatrixColorDiscriminability(BaseModel):
@@ -1243,7 +1243,7 @@ def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
             "column_coherence": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
-            "blockiness": ResourceRoleMatrixMetricBound(
+            "degree_order_agreement": ResourceRoleMatrixMetricBound(
                 lower=0.0, upper=1.0, higher_is_better=True
             ),
             "row_fragmentation": ResourceRoleMatrixMetricBound(

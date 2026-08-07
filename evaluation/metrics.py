@@ -31,24 +31,31 @@ def neighbor_similarity_coherence(values: np.ndarray) -> float:
     return float(np.mean(similarities))
 
 
-def blockiness(values: np.ndarray) -> float:
-    """Return adjacent-vector block coherence on a 0..1 scale (higher is better).
+def degree_order_agreement(values: np.ndarray) -> float:
+    """Return pairwise agreement with descending resource-degree order.
 
-    This is the complement of normalized Hamilton-path length under Jaccard
-    distance, averaged over the independently reorderable row and column axes.
-    It rewards placing resources with similar role memberships, and roles with
-    similar resource memberships, next to one another.
+    For each pair of resources with different numbers of roles, the pair
+    agrees when the resource with more roles is displayed first. Tied pairs do
+    not affect the result. This is a direction-aware, normalized rank-order
+    agreement score: 1 means descending degree order, 0.5 is the expected
+    value for an unrelated order, and 0 means reverse degree order.
+
+    When every row has the same degree, all row orders are equally valid for
+    this task and the function returns 1 by convention.
     """
-    if values.size == 0:
-        return 0.0
+    if values.ndim != 2 or values.shape[0] < 2:
+        return 1.0
 
-    axis_scores = []
-    if values.shape[0] > 1:
-        axis_scores.append(neighbor_similarity_coherence(values))
-    if values.shape[1] > 1:
-        axis_scores.append(neighbor_similarity_coherence(values.T))
+    row_degrees = np.count_nonzero(values, axis=1)
+    first, second = np.triu_indices(values.shape[0], k=1)
+    degree_differences = row_degrees[first] - row_degrees[second]
+    comparable_pairs = degree_differences != 0
+    comparable_count = int(np.count_nonzero(comparable_pairs))
+    if comparable_count == 0:
+        return 1.0
 
-    return float(np.mean(axis_scores)) if axis_scores else 1.0
+    agreeing_count = int(np.count_nonzero(degree_differences[comparable_pairs] > 0))
+    return float(agreeing_count / comparable_count)
 
 
 def count_runs(row: np.ndarray) -> int:

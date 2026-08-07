@@ -11,7 +11,7 @@ from evaluation.color_metrics import (
 from evaluation.matrix_model import ResourceRoleMatrix
 from evaluation.metrics import (
     average_fragmentation,
-    blockiness,
+    degree_order_agreement,
     density,
     neighbor_similarity_coherence,
 )
@@ -49,7 +49,7 @@ class MatrixEvaluationResult:
     column_coherence: float
     row_fragmentation: float
     column_fragmentation: float
-    blockiness: float
+    degree_order_agreement: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -63,7 +63,7 @@ class MatrixEvaluationResult:
             "column_coherence": self.column_coherence,
             "row_fragmentation": self.row_fragmentation,
             "column_fragmentation": self.column_fragmentation,
-            "blockiness": self.blockiness,
+            "degree_order_agreement": self.degree_order_agreement,
         }
 
 
@@ -191,7 +191,7 @@ def evaluate_resource_role_matrix(
         column_coherence=neighbor_similarity_coherence(matrix.values.T),
         row_fragmentation=average_fragmentation(matrix.values),
         column_fragmentation=average_fragmentation(matrix.values.T),
-        blockiness=blockiness(matrix.values),
+        degree_order_agreement=degree_order_agreement(matrix.values),
     )
 
 
