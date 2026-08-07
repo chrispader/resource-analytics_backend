@@ -369,9 +369,13 @@ def extract_plotly_features(figure: str | Mapping[str, Any] | Any) -> tuple[Plot
         if trace_type not in CARTESIAN_TRACE_TYPES:
             continue
         for coordinate in ("x", "y"):
+            axis_name = _axis_name(trace, coordinate)
+            axis = layout.get(axis_name) or {}
+            if _axis_is_intentionally_hidden(axis):
+                continue
             values = _numeric_values(trace.get(coordinate))
             if values:
-                axis_values.setdefault(_axis_name(trace, coordinate), []).extend(values)
+                axis_values.setdefault(axis_name, []).extend(values)
     numeric_axes = tuple(axis_values)
 
     excessive_tick_axes = []

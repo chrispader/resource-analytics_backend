@@ -97,40 +97,45 @@ def test_hidden_subplot_axes_do_not_require_visible_labels():
         }
     )
 
-    assert findings_by_id(report)["axis-labels"].status == STATUS_PASS
+    findings = findings_by_id(report)
+    assert findings["axis-labels"].status == STATUS_PASS
+    assert "axis-reference-values" not in findings
+    assert "log-scale" not in findings
     assert features.axis_names == ("xaxis", "yaxis", "xaxis2", "yaxis2")
     assert features.unlabeled_axes == ()
 
 
 def test_numeric_features_respect_each_trace_axis_reference():
-    features, _ = extract_plotly_features(
-        {
-            "data": [
-                {
-                    "type": "scatter",
-                    "x": [1, 100, 10_000],
-                    "y": [1, 2, 3],
-                },
-                {
-                    "type": "bar",
-                    "x": [1, 2, 3, 4, 5],
-                    "y": [10, 20, 30, 40, 50],
-                    "xaxis": "x2",
-                    "yaxis": "y2",
-                },
-            ],
-            "layout": {
-                "xaxis": {"title": "Wide range"},
-                "yaxis": {"title": "First values"},
-                "xaxis2": {"title": "Compact range"},
-                "yaxis2": {"title": "Second values"},
+    figure = {
+        "data": [
+            {
+                "type": "scatter",
+                "x": [1, 100, 10_000],
+                "y": [1, 2, 3],
             },
-        }
-    )
+            {
+                "type": "bar",
+                "x": [1, 2, 3, 4, 5],
+                "y": [10, 20, 30, 40, 50],
+                "xaxis": "x2",
+                "yaxis": "y2",
+            },
+        ],
+        "layout": {
+            "xaxis": {"title": "Wide range"},
+            "yaxis": {"title": "First values"},
+            "xaxis2": {"title": "Compact range"},
+            "yaxis2": {"title": "Second values"},
+        },
+    }
+    features, _ = extract_plotly_features(figure)
+    findings = findings_by_id(evaluate_plotly_figure(figure))
 
     assert features.numeric_axes == ("xaxis", "yaxis", "xaxis2", "yaxis2")
     assert features.squeezed_axes == ("xaxis",)
     assert features.excessive_tick_axes == ("xaxis", "yaxis")
+    assert findings["axis-reference-values"].status == STATUS_WARNING
+    assert findings["log-scale"].status == STATUS_WARNING
 
 
 def test_more_than_four_colors_is_warning():
