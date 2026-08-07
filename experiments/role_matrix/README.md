@@ -28,7 +28,8 @@ than the resource's exact observed role profile.
 Run this command from the backend repository root:
 
 ```sh
-python -m experiments.role_matrix.generate --output generated/role-matrix
+python -m experiments.role_matrix.workflow generate \
+  --output generated/role-matrix
 ```
 
 The command writes logs into `small/`, `medium/`, and `large/` directories and
@@ -41,3 +42,34 @@ low to medium to high for any matched condition.
 The committed `config.json` is the experiment definition. Pass a smaller test
 configuration with `--config` when developing the workflow; do not manually
 edit generated CSV files.
+
+## Evaluate the logs
+
+The reusable runner uses the same matrix construction, four fixed orderings,
+structural metrics, color evaluation, Plotly renderer, and 23-rule heuristic
+catalog as the application. It also evaluates 100 deterministic random
+permutations per dataset and computes an experiment-only planted-group
+contiguity score. Run it without a server or browser:
+
+```sh
+python -m experiments.role_matrix.workflow evaluate \
+  --manifest generated/role-matrix/manifest.csv \
+  --output generated/role-matrix-results
+```
+
+Use the `full` command to generate and evaluate in one reproducible operation:
+
+```sh
+python -m experiments.role_matrix.workflow full \
+  --output generated/role-matrix-experiment
+```
+
+The results include fixed-ordering metrics, random-baseline metrics, dataset
+and color summaries, all rule-level heuristic outcomes, direction-aware random
+comparisons, marginal factor-level aggregates, across-seed condition
+aggregates, and JSON metadata/configuration. Before evaluation, each CSV's
+SHA-256 hash, observed resource and role counts, and density are checked against
+the manifest. This prevents a changed or incomplete input from silently entering
+the results. The random comparison treats lower fragmentation as better and all
+other metrics as higher-is-better. `--random-seeds` can reduce the baseline
+count for a quick development run; the research default is 100.
