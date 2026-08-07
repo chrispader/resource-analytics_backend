@@ -5,9 +5,14 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.metadata
+import itertools
 import json
 import math
+import platform
 import shutil
+import subprocess
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from statistics import fmean, pstdev
@@ -30,7 +35,17 @@ from evaluation.plotly_heuristics import (
     PUBLISHED_HEURISTIC_RULES,
     evaluate_plotly_figure,
 )
-from experiments.role_matrix.generate import CONFIG_PATH, generate_factorial_experiment
+from experiments.role_matrix.generate import (
+    CONFIG_PATH,
+    MIN_GROUP_SEPARATION,
+    PROFILE_DIVERSITY_TARGETS,
+    PROFILE_DIVERSITY_TOLERANCE,
+    _group_jaccard_separation,
+    _normalized_entropy,
+    _normalized_profile_entropy,
+    generate_factorial_experiment,
+    load_config,
+)
 from pm import (
     RESOURCE_ROLE_MATRIX_PALETTE,
     compute_resource_role_matrix_context,
@@ -61,6 +76,26 @@ FACTOR_COLUMNS = (
     "role_count",
     "target_density",
     "profile_diversity",
+)
+ANALYSIS_FACTORS = (
+    "resource_count",
+    "role_count",
+    "target_density",
+    "profile_diversity",
+)
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+PROVENANCE_FILES = (
+    "experiments/role_matrix/generate.py",
+    "experiments/role_matrix/workflow.py",
+    "experiments/role_matrix/config.json",
+    "evaluation/evaluate.py",
+    "evaluation/metrics.py",
+    "evaluation/ordering.py",
+    "evaluation/color_metrics.py",
+    "evaluation/matrix_model.py",
+    "evaluation/plotly_heuristics.py",
+    "requirements.txt",
+    "pm.py",
 )
 
 
@@ -101,6 +136,62 @@ def _read_manifest(path: Path) -> list[dict[str, str]]:
     if not rows:
         raise ValueError("manifest.csv contains no datasets")
     return sorted(rows, key=lambda row: row["path"])
+
+
+def _validate_manifest_against_config(
+    manifest_rows: Sequence[Mapping[str, str]],
+    config: Mapping[str, object],
+) -> None:
+    sizes = config.get("resource_sizes")
+    if not isinstance(sizes, dict) or not sizes:
+        raise ValueError("Config resource_sizes must be a non-empty object")
+    required_lists = (
+        "role_counts",
+        "target_densities",
+        "profile_diversities",
+        "seeds",
+    )
+    if any(not isinstance(config.get(key), list) or not config[key] for key in required_lists):
+        raise ValueError("Config factorial levels must be non-empty lists")
+
+    expected = {
+        (
+            str(size),
+            int(resource_count),
+            int(role_count),
+            float(density),
+            str(diversity),
+            int(seed),
+        )
+        for (size, resource_count), role_count, density, diversity, seed in itertools.product(
+            sizes.items(),
+            config["role_counts"],
+            config["target_densities"],
+            config["profile_diversities"],
+            config["seeds"],
+        )
+    }
+    observed = [
+        (
+            row["size"],
+            int(row["resource_count"]),
+            int(row["role_count"]),
+            float(row["target_density"]),
+            row["profile_diversity"],
+            int(row["seed"]),
+        )
+        for row in manifest_rows
+    ]
+    if len(observed) != len(set(observed)):
+        raise ValueError("Manifest contains duplicate factorial conditions")
+    observed_set = set(observed)
+    if observed_set != expected:
+        missing = sorted(expected - observed_set, key=str)
+        unexpected = sorted(observed_set - expected, key=str)
+        raise ValueError(
+            "Manifest/config factorial mismatch: "
+            f"missing={missing[:3]}, unexpected={unexpected[:3]}"
+        )
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -164,6 +255,7 @@ def _validate_log_against_manifest(
     log_path: Path,
     manifest_row: Mapping[str, str],
     matrix: ResourceRoleMatrix,
+    resource_groups: Mapping[str, str],
 ) -> None:
     expected_hash = manifest_row.get("sha256")
     if not expected_hash:
@@ -201,6 +293,72 @@ def _validate_log_against_manifest(
         raise ValueError(
             f"Target density mismatch for {log_path.name}: "
             f"target {target_density}, observed {observed_density}"
+        )
+
+    profiles = [
+        tuple(int(index) for index, value in enumerate(row) if value)
+        for row in matrix.values
+    ]
+    degrees = [len(profile) for profile in profiles]
+    groups = [resource_groups[resource] for resource in matrix.resources]
+    degree_mean = sum(degrees) / len(degrees)
+    degree_standard_deviation = math.sqrt(
+        sum((degree - degree_mean) ** 2 for degree in degrees) / len(degrees)
+    )
+    within_jaccard, between_jaccard, separation = _group_jaccard_separation(
+        profiles,
+        groups,
+    )
+    derived_statistics = {
+        "unique_profile_count": len(set(profiles)),
+        "normalized_profile_entropy": _normalized_profile_entropy(profiles),
+        "profile_group_count": len(set(groups)),
+        "degree_value_count": len(set(degrees)),
+        "degree_standard_deviation": degree_standard_deviation,
+        "degree_coefficient_of_variation": degree_standard_deviation / degree_mean,
+        "normalized_degree_entropy": _normalized_entropy(degrees),
+        "within_group_jaccard": within_jaccard,
+        "between_group_jaccard": between_jaccard,
+        "group_jaccard_separation": separation,
+    }
+    integer_statistics = {
+        "unique_profile_count",
+        "profile_group_count",
+        "degree_value_count",
+    }
+    for statistic, observed_value in derived_statistics.items():
+        manifest_value = manifest_row.get(statistic)
+        if manifest_value is None:
+            raise ValueError(f"Manifest has no {statistic} value for {log_path.name}")
+        matches = (
+            int(manifest_value) == observed_value
+            if statistic in integer_statistics
+            else math.isclose(float(manifest_value), observed_value, abs_tol=1e-8)
+        )
+        if not matches:
+            raise ValueError(
+                f"{statistic} mismatch for {log_path.name}: "
+                f"manifest {manifest_value}, observed {observed_value}"
+            )
+
+    diversity_level = manifest_row["profile_diversity"]
+    configured_target = PROFILE_DIVERSITY_TARGETS[diversity_level]
+    manifest_target = float(manifest_row["target_relative_profile_diversity"])
+    realized_diversity = float(manifest_row["realized_relative_profile_diversity"])
+    if not math.isclose(manifest_target, configured_target, abs_tol=1e-12):
+        raise ValueError(
+            f"Profile-diversity target mismatch for {log_path.name}: "
+            f"configured {configured_target}, manifest {manifest_target}"
+        )
+    if abs(realized_diversity - configured_target) > PROFILE_DIVERSITY_TOLERANCE:
+        raise ValueError(
+            f"Realized profile diversity is outside configured tolerance for "
+            f"{log_path.name}: target {configured_target}, realized {realized_diversity}"
+        )
+    if separation < MIN_GROUP_SEPARATION:
+        raise ValueError(
+            f"Planted-group separation is below the configured minimum for "
+            f"{log_path.name}: minimum {MIN_GROUP_SEPARATION}, observed {separation}"
         )
 
 
@@ -374,6 +532,79 @@ def _condition_aggregate_rows(
     return rows
 
 
+def _factor_interaction_rows(
+    fixed_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    grouped: dict[tuple[object, ...], list[float]] = defaultdict(list)
+    for factor_a, factor_b in itertools.combinations(ANALYSIS_FACTORS, 2):
+        for row in fixed_rows:
+            for metric in STRUCTURAL_METRICS:
+                key = (
+                    factor_a,
+                    row[factor_a],
+                    factor_b,
+                    row[factor_b],
+                    row["variant"],
+                    metric,
+                )
+                grouped[key].append(float(row[metric]))
+
+    rows = []
+    for key, values in sorted(grouped.items(), key=lambda item: tuple(map(str, item[0]))):
+        factor_a, value_a, factor_b, value_b, variant, metric = key
+        rows.append(
+            {
+                "factor_a": factor_a,
+                "factor_a_value": value_a,
+                "factor_b": factor_b,
+                "factor_b_value": value_b,
+                "variant": variant,
+                "metric": metric,
+                "higher_is_better": HIGHER_IS_BETTER[metric],
+                "observation_count": len(values),
+                "mean": fmean(values),
+                "std": pstdev(values),
+                "min": min(values),
+                "max": max(values),
+            }
+        )
+    return rows
+
+
+def _git_provenance() -> dict[str, object]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=BACKEND_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=BACKEND_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        return {"commit": commit, "dirty": dirty}
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None}
+
+
+def _dependency_versions() -> dict[str, str | None]:
+    packages = ("numpy", "pandas", "plotly", "scikit-image", "pytest")
+    versions = {}
+    for package in packages:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
 def evaluate_experiment(
     manifest_path: Path,
     output_root: Path,
@@ -385,6 +616,8 @@ def evaluate_experiment(
         raise ValueError("random_seed_count must be positive")
 
     manifest_rows = _read_manifest(manifest_path)
+    config = load_config(config_path)
+    _validate_manifest_against_config(manifest_rows, config)
     output_root.mkdir(parents=True, exist_ok=True)
     fixed_rows: list[dict[str, object]] = []
     random_rows: list[dict[str, object]] = []
@@ -396,7 +629,12 @@ def evaluate_experiment(
         dataset_id = log_path.stem
         factors = _factor_values(manifest_row)
         _, context, matrix, resource_groups = _matrix_from_log(log_path)
-        _validate_log_against_manifest(log_path, manifest_row, matrix)
+        _validate_log_against_manifest(
+            log_path,
+            manifest_row,
+            matrix,
+            resource_groups,
+        )
         variants = build_ordering_variants(matrix)
 
         role_colors = role_palette(RESOURCE_ROLE_MATRIX_PALETTE, len(matrix.roles))
@@ -417,7 +655,34 @@ def evaluate_experiment(
                 "normalized_profile_entropy": float(
                     manifest_row["normalized_profile_entropy"]
                 ),
+                "baseline_generated_profile_entropy": float(
+                    manifest_row["baseline_generated_profile_entropy"]
+                ),
+                "maximum_generated_profile_entropy": float(
+                    manifest_row["maximum_generated_profile_entropy"]
+                ),
                 "profile_group_count": int(manifest_row["profile_group_count"]),
+                "target_relative_profile_diversity": float(
+                    manifest_row["target_relative_profile_diversity"]
+                ),
+                "realized_relative_profile_diversity": float(
+                    manifest_row["realized_relative_profile_diversity"]
+                ),
+                "degree_value_count": int(manifest_row["degree_value_count"]),
+                "degree_standard_deviation": float(
+                    manifest_row["degree_standard_deviation"]
+                ),
+                "degree_coefficient_of_variation": float(
+                    manifest_row["degree_coefficient_of_variation"]
+                ),
+                "normalized_degree_entropy": float(
+                    manifest_row["normalized_degree_entropy"]
+                ),
+                "within_group_jaccard": float(manifest_row["within_group_jaccard"]),
+                "between_group_jaccard": float(manifest_row["between_group_jaccard"]),
+                "group_jaccard_separation": float(
+                    manifest_row["group_jaccard_separation"]
+                ),
                 **color.to_dict(),
             }
         )
@@ -455,6 +720,7 @@ def evaluate_experiment(
     comparison_rows = _comparison_rows(fixed_rows, random_rows)
     aggregate_rows = _factor_aggregate_rows(fixed_rows)
     condition_aggregate_rows = _condition_aggregate_rows(fixed_rows)
+    interaction_rows = _factor_interaction_rows(fixed_rows)
     artifacts = {
         "fixed_ordering_metrics": output_root / "fixed_ordering_metrics.csv",
         "random_baseline_metrics": output_root / "random_baseline_metrics.csv",
@@ -463,37 +729,85 @@ def evaluate_experiment(
         "random_comparisons": output_root / "random_comparisons.csv",
         "factor_aggregates": output_root / "factor_aggregates.csv",
         "condition_aggregates": output_root / "condition_aggregates.csv",
+        "factor_interactions": output_root / "factor_interactions.csv",
         "run_metadata": output_root / "run_metadata.json",
         "experiment_config": output_root / "experiment_config.json",
     }
-    _write_csv(artifacts["fixed_ordering_metrics"], fixed_rows)
-    _write_csv(artifacts["random_baseline_metrics"], random_rows)
-    _write_csv(artifacts["dataset_summaries"], dataset_rows)
-    _write_csv(artifacts["heuristic_findings"], heuristic_rows)
-    _write_csv(artifacts["random_comparisons"], comparison_rows)
-    _write_csv(artifacts["factor_aggregates"], aggregate_rows)
-    _write_csv(artifacts["condition_aggregates"], condition_aggregate_rows)
-
-    metadata = {
-        "schema_version": 1,
-        "dataset_count": len(manifest_rows),
-        "deterministic_orderings": list(ENABLED_ORDERING_VARIANTS),
-        "random_seed_count": random_seed_count,
-        "random_seeds": list(range(random_seed_count)),
-        "structural_metrics": [
-            {
-                "name": metric,
-                "higher_is_better": HIGHER_IS_BETTER[metric],
-            }
-            for metric in STRUCTURAL_METRICS
-        ],
-        "heuristic_rule_count": len(PUBLISHED_HEURISTIC_RULES),
-        "artifact_files": sorted(path.name for path in artifacts.values()),
-        "manifest_sha256": _sha256(manifest_path),
-        "experiment_config_sha256": _sha256(config_path),
+    known_artifact_paths = {path.resolve() for path in artifacts.values()}
+    ignored_preexisting_output_files = sorted(
+        path.relative_to(output_root).as_posix()
+        for path in output_root.rglob("*")
+        if path.is_file() and path.resolve() not in known_artifact_paths
+    )
+    input_hashes = {
+        row["path"]: row["sha256"]
+        for row in manifest_rows
     }
-    _write_json(artifacts["run_metadata"], metadata)
-    shutil.copyfile(config_path, artifacts["experiment_config"])
+    code_hashes = {
+        relative_path: _sha256(BACKEND_ROOT / relative_path)
+        for relative_path in PROVENANCE_FILES
+        if (BACKEND_ROOT / relative_path).exists()
+    }
+
+    staging_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}-staging-",
+            dir=output_root.parent,
+        )
+    )
+    staged = {name: staging_root / path.name for name, path in artifacts.items()}
+    try:
+        _write_csv(staged["fixed_ordering_metrics"], fixed_rows)
+        _write_csv(staged["random_baseline_metrics"], random_rows)
+        _write_csv(staged["dataset_summaries"], dataset_rows)
+        _write_csv(staged["heuristic_findings"], heuristic_rows)
+        _write_csv(staged["random_comparisons"], comparison_rows)
+        _write_csv(staged["factor_aggregates"], aggregate_rows)
+        _write_csv(staged["condition_aggregates"], condition_aggregate_rows)
+        _write_csv(staged["factor_interactions"], interaction_rows)
+        shutil.copyfile(config_path, staged["experiment_config"])
+
+        output_hashes = {
+            path.name: _sha256(path)
+            for name, path in staged.items()
+            if name != "run_metadata"
+        }
+        metadata = {
+            "schema_version": 1,
+            "dataset_count": len(manifest_rows),
+            "deterministic_orderings": list(ENABLED_ORDERING_VARIANTS),
+            "random_seed_count": random_seed_count,
+            "random_seeds": list(range(random_seed_count)),
+            "structural_metrics": [
+                {
+                    "name": metric,
+                    "higher_is_better": HIGHER_IS_BETTER[metric],
+                }
+                for metric in STRUCTURAL_METRICS
+            ],
+            "heuristic_rule_count": len(PUBLISHED_HEURISTIC_RULES),
+            "artifact_files": sorted(path.name for path in artifacts.values()),
+            "manifest_sha256": _sha256(manifest_path),
+            "experiment_config_sha256": _sha256(config_path),
+            "input_sha256": input_hashes,
+            "output_sha256": output_hashes,
+            "code_sha256": code_hashes,
+            "backend_git": _git_provenance(),
+            "python_version": platform.python_version(),
+            "dependency_versions": _dependency_versions(),
+            "analysis_scope": "descriptive factorial summaries; no inferential claims",
+            "provenance_scope": (
+                "Hashes cover the directly invoked local experiment, matrix, metric, "
+                "ordering, color, heuristic, rendering, and dependency-declaration files."
+            ),
+            "ignored_preexisting_output_files": ignored_preexisting_output_files,
+        }
+        _write_json(staged["run_metadata"], metadata)
+
+        for name, destination in artifacts.items():
+            staged[name].replace(destination)
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
     return artifacts
 
 

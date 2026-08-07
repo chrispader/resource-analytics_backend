@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+import experiments.role_matrix.workflow as workflow
 from evaluation.evaluate import ENABLED_ORDERING_VARIANTS
 from evaluation.color_metrics import evaluate_color_discriminability
 from evaluation.evaluate import role_palette
@@ -15,6 +16,13 @@ from pm import RESOURCE_ROLE_MATRIX_PALETTE
 def _rows(path):
     with path.open(encoding="utf-8", newline="") as artifact:
         return list(csv.DictReader(artifact))
+
+
+def _write_rows(path, rows):
+    with path.open("w", encoding="utf-8", newline="") as artifact:
+        writer = csv.DictWriter(artifact, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _tiny_experiment(tmp_path):
@@ -46,6 +54,7 @@ def test_workflow_exports_expected_rows_and_coverage(tmp_path):
     heuristics = _rows(artifacts["heuristic_findings"])
     comparisons = _rows(artifacts["random_comparisons"])
     condition_aggregates = _rows(artifacts["condition_aggregates"])
+    interactions = _rows(artifacts["factor_interactions"])
 
     assert len(fixed) == 3 * len(ENABLED_ORDERING_VARIANTS)
     assert len(random) == 3 * 3
@@ -54,6 +63,13 @@ def test_workflow_exports_expected_rows_and_coverage(tmp_path):
     )
     assert len(comparisons) == len(fixed) * 6
     assert len(condition_aggregates) == 3 * len(ENABLED_ORDERING_VARIANTS) * 6
+    assert interactions
+    assert {row["factor_a"] for row in interactions} <= {
+        "resource_count",
+        "role_count",
+        "target_density",
+        "profile_diversity",
+    }
     assert {row["variant"] for row in fixed} == set(ENABLED_ORDERING_VARIANTS)
     assert all(0 <= float(row["group_contiguity"]) <= 1 for row in fixed + random)
     assert {row["status"] for row in heuristics} <= {
@@ -136,3 +152,119 @@ def test_workflow_rejects_tampered_event_log(tmp_path):
             random_seed_count=1,
             config_path=config,
         )
+
+
+def test_workflow_rejects_incomplete_factorial_manifest(tmp_path):
+    manifest, config = _tiny_experiment(tmp_path)
+    rows = _rows(manifest)[:-1]
+    _write_rows(manifest, rows)
+
+    with pytest.raises(ValueError, match="Manifest/config factorial mismatch"):
+        evaluate_experiment(
+            manifest,
+            tmp_path / "results",
+            random_seed_count=1,
+            config_path=config,
+        )
+
+
+def test_run_metadata_records_reproducibility_provenance(tmp_path):
+    manifest, config = _tiny_experiment(tmp_path)
+    artifacts = evaluate_experiment(
+        manifest,
+        tmp_path / "results",
+        random_seed_count=1,
+        config_path=config,
+    )
+    metadata = json.loads(artifacts["run_metadata"].read_text(encoding="utf-8"))
+
+    assert metadata["python_version"]
+    assert metadata["dependency_versions"]["pandas"]
+    assert "commit" in metadata["backend_git"]
+    assert metadata["input_sha256"]
+    assert metadata["output_sha256"]["condition_aggregates.csv"]
+    assert metadata["output_sha256"]["factor_interactions.csv"]
+    assert metadata["code_sha256"]["experiments/role_matrix/generate.py"]
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    (
+        ("unique_profile_count", "999", "unique_profile_count mismatch"),
+        (
+            "realized_relative_profile_diversity",
+            "0.99",
+            "outside configured tolerance",
+        ),
+    ),
+)
+def test_workflow_rejects_inconsistent_scientific_statistics(
+    tmp_path,
+    field,
+    replacement,
+    message,
+):
+    manifest, config = _tiny_experiment(tmp_path)
+    rows = _rows(manifest)
+    rows[0][field] = replacement
+    _write_rows(manifest, rows)
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_experiment(
+            manifest,
+            tmp_path / "results",
+            random_seed_count=1,
+            config_path=config,
+        )
+
+
+def test_workflow_reports_unknown_output_files_without_deleting_them(tmp_path):
+    manifest, config = _tiny_experiment(tmp_path)
+    output = tmp_path / "results"
+    output.mkdir()
+    note = output / "research-notes.txt"
+    note.write_text("keep me", encoding="utf-8")
+
+    artifacts = evaluate_experiment(
+        manifest,
+        output,
+        random_seed_count=1,
+        config_path=config,
+    )
+    metadata = json.loads(artifacts["run_metadata"].read_text(encoding="utf-8"))
+
+    assert note.read_text(encoding="utf-8") == "keep me"
+    assert metadata["ignored_preexisting_output_files"] == ["research-notes.txt"]
+
+
+def test_failed_staged_publication_preserves_existing_results(tmp_path, monkeypatch):
+    manifest, config = _tiny_experiment(tmp_path)
+    output = tmp_path / "results"
+    artifacts = evaluate_experiment(
+        manifest,
+        output,
+        random_seed_count=1,
+        config_path=config,
+    )
+    valid_contents = {
+        name: path.read_bytes()
+        for name, path in artifacts.items()
+    }
+
+    def fail_metadata_write(path, value):
+        raise RuntimeError("simulated staging failure")
+
+    monkeypatch.setattr(workflow, "_write_json", fail_metadata_write)
+    with pytest.raises(RuntimeError, match="simulated staging failure"):
+        evaluate_experiment(
+            manifest,
+            output,
+            random_seed_count=1,
+            config_path=config,
+        )
+
+    assert {
+        name: path.read_bytes()
+        for name, path in artifacts.items()
+    } == valid_contents
+    assert not list(tmp_path.glob(".results-staging-*"))

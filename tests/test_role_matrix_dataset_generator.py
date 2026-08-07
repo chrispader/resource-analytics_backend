@@ -6,8 +6,17 @@ import pytest
 
 from experiments.role_matrix.generate import (
     DatasetCondition,
+    MIN_GROUP_SEPARATION,
+    PROFILE_DIVERSITY_TARGETS,
+    PROFILE_DIVERSITY_TOLERANCE,
+    _conditions,
+    _group_jaccard_separation,
+    _profile_groups,
+    _row_degrees,
+    _assign_profiles,
     generate_dataset,
     generate_factorial_experiment,
+    load_config,
 )
 
 
@@ -42,8 +51,6 @@ def test_generated_log_has_expected_matrix_properties(tmp_path):
         "PG-01",
         "PG-02",
         "PG-03",
-        "PG-04",
-        "PG-05",
     }
     assert len({row["Case ID"] for row in rows}) == BASE_CONDITION.resource_count
 
@@ -73,7 +80,7 @@ def test_diversity_changes_profiles_but_preserves_row_degrees(tmp_path):
     assert row_degrees(results["medium"]) == row_degrees(results["high"])
     assert group_membership(results["low"]) == group_membership(results["medium"])
     assert group_membership(results["medium"]) == group_membership(results["high"])
-    assert all(result.profile_group_count == 5 for result in results.values())
+    assert all(result.profile_group_count == 3 for result in results.values())
     assert (
         results["low"].unique_profile_count
         < results["medium"].unique_profile_count
@@ -115,3 +122,58 @@ def test_factorial_workflow_writes_manifest(tmp_path):
         "medium",
         "high",
     }
+
+
+def test_all_factorial_conditions_meet_design_invariants():
+    matched = {}
+    for condition in _conditions(load_config()):
+        groups = _profile_groups(condition)
+        degrees = _row_degrees(condition, groups)
+        profiles, _, _, _, realized_diversity, minimum_entropy, maximum_entropy = _assign_profiles(
+            condition,
+            degrees,
+            groups,
+        )
+        _, _, separation = _group_jaccard_separation(profiles, groups)
+
+        assert len(set(degrees)) >= 2
+        assert max(degrees) > min(degrees)
+        assert all(
+            len(
+                {
+                    degree
+                    for degree, assigned_group in zip(degrees, groups)
+                    if assigned_group == group
+                }
+            )
+            >= 2
+            for group in set(groups)
+        )
+        assert sum(degrees) == round(
+            condition.resource_count
+            * condition.role_count
+            * condition.target_density
+        )
+        assert set().union(*map(set, profiles)) == set(range(condition.role_count))
+        assert all(
+            group in profile
+            and not ({0, 1, 2} - {group}).intersection(profile)
+            for profile, group in zip(profiles, groups)
+        )
+        assert separation >= MIN_GROUP_SEPARATION
+        assert realized_diversity == pytest.approx(
+            PROFILE_DIVERSITY_TARGETS[condition.profile_diversity],
+            abs=PROFILE_DIVERSITY_TOLERANCE,
+        )
+        assert 0 <= minimum_entropy <= maximum_entropy <= 1
+
+        key = (
+            condition.size,
+            condition.resource_count,
+            condition.role_count,
+            condition.target_density,
+            condition.seed,
+        )
+        previous = matched.setdefault(key, (groups, degrees))
+        assert groups == previous[0]
+        assert degrees == previous[1]
