@@ -15,6 +15,10 @@ import base64
 from io import BytesIO
 
 from pydantic import BaseModel
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from evaluation.evaluate import MatrixEvaluationResult
 
 class OutputModel(BaseModel):
     table: list[dict]
@@ -23,6 +27,105 @@ class OutputModel(BaseModel):
     plot: str | None = None
     big_plot: str | None = None
     process_model: str | None = None
+    nodes: list[dict[str, Any]] | None = None
+    edges: list[dict[str, Any]] | None = None
+    metrics: dict[str, Any] | None = None
+
+
+class ResourceRoleMatrixOutputModel(OutputModel):
+    plots: dict[str, dict[str, Any]]
+
+class ResourceRoleMatrixData(BaseModel):
+    """
+    Resource×Role data derived from the event log.
+
+    Row/column order is fixed by `resources` and `roles`. Use `mapping[i][j]` for
+    programmatic checks; `z` is only the Plotly visualization encoding.
+    """
+
+    resources: list[str]
+    roles: list[str]
+    mapping: list[list[bool]]
+    z: list[list[int]]
+    assignments: list[dict[str, str]]
+    table: list[dict]
+    metrics: dict[str, Any]
+
+
+class ResourceRoleMatrixQualityEvaluation(BaseModel):
+    variant: str
+    seed: int | None = None
+    row_coherence: float
+    column_coherence: float
+    row_fragmentation: float
+    column_fragmentation: float
+    degree_order_agreement: float
+
+
+class ResourceRoleMatrixColorDiscriminability(BaseModel):
+    score: float
+    min_delta_e: float
+    mean_delta_e: float
+    max_delta_e: float
+    min_contrast_ratio: float
+    mean_contrast_ratio: float
+    max_contrast_ratio: float
+
+
+class ResourceRoleMatrixEvaluations(BaseModel):
+    """
+    Quality metrics grouped by ordering variant.
+
+    color_discriminability: order-independent checks for the visible colors.
+    orderings: named variants (e.g. row_degree, degree_based, similarity_based).
+    random_baselines: optional list of metrics from repeated random orderings.
+    """
+
+    color_discriminability: ResourceRoleMatrixColorDiscriminability
+    orderings: dict[str, ResourceRoleMatrixQualityEvaluation]
+    random_baselines: list[ResourceRoleMatrixQualityEvaluation] = []
+
+
+class ResourceRoleMatrixMetricBound(BaseModel):
+    lower: float
+    upper: float
+    higher_is_better: bool
+
+
+class PlotlyHeuristicRuleLabels(BaseModel):
+    visual_frames: list[str] = []
+    visual_structures: list[str] = []
+    visual_unities: list[str] = []
+    visual_primitives: list[str] = []
+    labeling: list[str] = []
+    interaction: list[str] = []
+    data_attributes: list[str] = []
+
+
+class PlotlyHeuristicFindingModel(BaseModel):
+    rule_id: str
+    heuristic: str
+    assistance: str
+    status: str
+    message: str
+    recommendation: str | None = None
+    labels: PlotlyHeuristicRuleLabels
+    evidence: dict[str, Any]
+    source: str
+
+
+class PlotlyHeuristicReportModel(BaseModel):
+    summary: dict[str, int]
+    feature_summary: dict[str, Any]
+    findings: list[PlotlyHeuristicFindingModel]
+
+
+class ResourceRoleMatrixEvaluationModel(BaseModel):
+    evaluations: ResourceRoleMatrixEvaluations
+    metric_bounds: dict[str, ResourceRoleMatrixMetricBound]
+    plots: dict[str, dict[str, Any]]
+    heuristic_report: PlotlyHeuristicReportModel
+
 
 class AnalysisFilterModel(BaseModel):
     metric: list[str]
@@ -65,13 +168,13 @@ custom_palette_1 = [
     "#B875E6",
     "#E6D475",
     "#8AE675",
-    "#db6d53", 
+    "#db6d53",
     "#8A75E6",
     "#75E6C2",
     "#E675D4",
     "#E6A275",
     "#75B8E6",
-    "#913ec9", 
+    "#913ec9",
     "#E6E675",
     "#75E6A2",
     "#E67575",
@@ -81,6 +184,9 @@ custom_palette_1 = [
     "#E6CC75",
     "#a7e8de"
 ]
+
+# The matrix's original design uses these five qualitative role colors.
+RESOURCE_ROLE_MATRIX_PALETTE = custom_palette_1[:5]
 
 custom_palette_2 = [
     "#758AE6",
@@ -93,36 +199,36 @@ custom_palette_2 = [
 def get_node_hover_details(df):
     # Create a dictionary to store metrics for each activity
     activity_hover_details = {}
-    
+
     # Get list of all unique activities
     activities = df["Activity"].unique()
-    
+
     for selected_activity in activities:
         # Filter only the current activity
         activity_df = df[df["Activity"] == selected_activity].copy()
-        
+
         if activity_df.empty:
             activity_hover_details[selected_activity] = {"error": f"No data found for activity: {selected_activity}"}
             continue
-        
+
         # Count occurrences
         occurrence_count = len(activity_df)
         unique_cases = activity_df["Case ID"].nunique()
         unique_resources = activity_df["Resource"].nunique()
-        
+
         # Get most common role
         responsible_role = activity_df["Role"].mode()[0] if not activity_df["Role"].empty else "Unknown"
-        
+
         # Convert timestamps
         activity_df["Start Timestamp"] = pd.to_datetime(activity_df["Start Timestamp"])
         activity_df["Complete Timestamp"] = pd.to_datetime(activity_df["Complete Timestamp"])
-        
+
         # Calculate durations
         activity_df["Duration"] = (activity_df["Complete Timestamp"] - activity_df["Start Timestamp"]).dt.total_seconds() / 60  # in minutes
-        
+
         # Average case duration
         avg_duration = activity_df.groupby('Case ID')['Duration'].sum().mean()
-        
+
         # Store metrics in dictionary
         activity_hover_details[selected_activity] = {
             "case_count": occurrence_count,
@@ -131,7 +237,7 @@ def get_node_hover_details(df):
             "responsible_role": responsible_role,
             "average_duration": round(avg_duration, 2),
         }
-    
+
     return activity_hover_details
 
 def calculate_node_measures(df, selected_activity):
@@ -169,7 +275,7 @@ def calculate_node_measures(df, selected_activity):
     acd_per_resource_df = acd_per_resource.reset_index()
     acd_per_resource_df.columns = ['Resource', 'Average Case Duration [min]']
 
-    fig = px.bar(acd_per_resource_df, y='Resource', x='Average Case Duration [min]', 
+    fig = px.bar(acd_per_resource_df, y='Resource', x='Average Case Duration [min]',
         title=f'Activity: {selected_activity}',
         labels={'Average Case Duration [min]': 'Average Case Duration [min]', 'Resource': 'Resource'},
         color_discrete_sequence=[BLUE])
@@ -184,7 +290,7 @@ def calculate_node_measures(df, selected_activity):
     )
 
     fig.update_traces(
-        hovertemplate='Avg. Case Duration: %{customdata}', 
+        hovertemplate='Avg. Case Duration: %{customdata}',
         customdata=round(acd_per_resource_df['Average Case Duration [min]'], 2))
     fig.update_xaxes(tickmode='linear', tick0=0, dtick=round(acd_per_resource_df["Average Case Duration [min]"].max()/5), automargin=True)
 
@@ -262,7 +368,7 @@ def units_per_role(df):
     fig.update_layout(
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
-        plot_bgcolor='white',  
+        plot_bgcolor='white',
         title={
             'y':0.9,
             'x':0.5,
@@ -325,7 +431,7 @@ def role_average_duration(df, normalize: bool = False):
         orientation='h',
         color_discrete_sequence=[BLUE])
 
-    # Custom hover text 
+    # Custom hover text
     fig.update_traces(hovertemplate='Average Case Duration: %{x:,.2f} minutes')
 
     fig.update_layout(
@@ -396,7 +502,7 @@ def resource_roles(df):
         'Roles': roles_per_resource
     })
 
-    fig = px.bar(resource_role_df, y='Resource', x='Number of Roles', 
+    fig = px.bar(resource_role_df, y='Resource', x='Number of Roles',
         title='Number of Roles per Resource',
         labels={'Number of Roles': 'Number of Roles', 'Resource': 'Resource'},
         color_discrete_sequence=[BLUE])
@@ -415,6 +521,757 @@ def resource_roles(df):
     plot = fig.to_json()
 
     return OutputModel(table=resource_role_df.to_dict(orient="records"), plot=plot)
+
+
+def _resource_role_matrix_colorscale(n_roles: int, palette: list[str]) -> list[list]:
+    """Piecewise scale for z in 0..n_roles: 0 = empty cell, k>0 = role column color."""
+    from evaluation.evaluate import role_palette
+
+    light_gray = "#ededed"
+    role_colors = role_palette(palette, n_roles)
+    if not role_colors:
+        return [[0, light_gray], [1, light_gray]]
+
+    scale: list[list] = [[0, light_gray], [0.5 / n_roles, light_gray]]
+    for k in range(1, n_roles + 1):
+        color = role_colors[k - 1]
+        t_mid = (k - 0.5) / n_roles
+        t_end = k / n_roles
+        scale.append([t_mid, color])
+        scale.append([t_end, color])
+    if scale[-1][0] < 1.0:
+        scale.append([1.0, role_colors[-1]])
+    return scale
+
+
+class ResourceRoleMatrixContext(NamedTuple):
+    roles_sorted: list
+    n_roles: int
+    resources_sorted: list
+    n_res: int
+    z: list[list[int]]
+    resources_per_role_counts: dict
+    roles_per_resource_counts: dict
+    total_assignments: int
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    metrics: dict[str, Any]
+    meta: pd.DataFrame
+
+
+def compute_resource_role_matrix_context(df) -> ResourceRoleMatrixContext:
+    """
+    Prepare Resource×Role matrix data: assignments, graph elements, and table metadata.
+    """
+    assignments = df[["Resource", "Role"]].dropna().drop_duplicates()
+    roles_sorted = sorted(df["Role"].dropna().unique().tolist())
+    n_roles = len(roles_sorted)
+
+    all_resources = sorted(df["Resource"].dropna().unique().tolist())
+    role_lists_by_resource = (
+        assignments.groupby("Resource")["Role"]
+        .agg(lambda s: sorted(s.unique().tolist()))
+        if not assignments.empty
+        else pd.Series(dtype=object)
+    )
+
+    roles_per_resource_rows = []
+    for resource in all_resources:
+        if resource in role_lists_by_resource.index:
+            role_list = role_lists_by_resource[resource]
+            if not isinstance(role_list, list):
+                role_list = [role_list]
+        else:
+            role_list = []
+        roles_per_resource_rows.append(
+            {
+                "Resource": resource,
+                "Number of Roles": len(role_list),
+                "Roles": role_list,
+            }
+        )
+
+    meta = pd.DataFrame(roles_per_resource_rows)
+    if meta.empty:
+        meta = pd.DataFrame(columns=["Resource", "Number of Roles", "Roles"])
+    else:
+        meta["roles_key"] = meta["Roles"].apply(lambda r: tuple(r))
+        meta = meta.sort_values(
+            by=["Number of Roles", "roles_key", "Resource"],
+            ascending=[False, True, True],
+        )
+    resources_sorted = meta["Resource"].tolist() if not meta.empty else []
+
+    role_to_col = {role: j for j, role in enumerate(roles_sorted)}
+    n_res = len(resources_sorted)
+    z = [[0 for _ in range(n_roles)] for _ in range(n_res)]
+    hover = [["" for _ in range(n_roles)] for _ in range(n_res)]
+
+    res_index = {r: i for i, r in enumerate(resources_sorted)}
+    for _, row in assignments.iterrows():
+        resource = row["Resource"]
+        role = row["Role"]
+        if resource not in res_index or role not in role_to_col:
+            continue
+        i = res_index[resource]
+        j = role_to_col[role]
+        z[i][j] = j + 1
+        hover[i][j] = f"Resource: {resource}<br>Role: {role}"
+
+    resources_per_role_counts = (
+        assignments.groupby("Role")["Resource"].nunique().astype(int).to_dict()
+    )
+    roles_per_resource_counts = (
+        assignments.groupby("Resource")["Role"].nunique().astype(int).to_dict()
+    )
+    total_assignments = int(len(assignments))
+
+    nodes: list[dict[str, Any]] = []
+    for r in resources_sorted:
+        nodes.append({"id": f"res:{r}", "label": r, "kind": "resource"})
+    for role in roles_sorted:
+        nodes.append({"id": f"role:{role}", "label": role, "kind": "role"})
+    for activity in sorted(df["Activity"].dropna().unique().tolist()):
+        nodes.append({"id": f"act:{activity}", "label": activity, "kind": "activity"})
+
+    edges_rr: list[dict[str, Any]] = []
+    for _, row in assignments.iterrows():
+        resource = row["Resource"]
+        role = row["Role"]
+        edges_rr.append(
+            {
+                "source": f"res:{resource}",
+                "target": f"role:{role}",
+                "kind": "resource_role",
+            }
+        )
+
+    role_activity = df[["Role", "Activity"]].drop_duplicates()
+    edges_ra: list[dict[str, Any]] = []
+    for _, row in role_activity.iterrows():
+        role = row["Role"]
+        activity = row["Activity"]
+        edges_ra.append(
+            {
+                "source": f"role:{role}",
+                "target": f"act:{activity}",
+                "kind": "role_activity",
+            }
+        )
+
+    edges = edges_rr + edges_ra
+
+    metrics = {
+        "total_assignments": total_assignments,
+        "resources_per_role": resources_per_role_counts,
+        "roles_per_resource": roles_per_resource_counts,
+    }
+
+
+    return ResourceRoleMatrixContext(
+        roles_sorted=roles_sorted,
+        n_roles=n_roles,
+        resources_sorted=resources_sorted,
+        n_res=n_res,
+        z=z,
+        resources_per_role_counts=resources_per_role_counts,
+        roles_per_resource_counts=roles_per_resource_counts,
+        total_assignments=total_assignments,
+        nodes=nodes,
+        edges=edges,
+        metrics=metrics,
+        meta=meta,
+    )
+
+
+def build_resource_role_matrix_figure(ctx: ResourceRoleMatrixContext) -> go.Figure:
+    """
+    Build the Plotly figure for the Resource×Role assignment matrix visualization.
+    """
+    roles_sorted = ctx.roles_sorted
+    n_roles = ctx.n_roles
+    resources_sorted = ctx.resources_sorted
+    n_res = ctx.n_res
+    z = ctx.z
+    resources_per_role_counts = ctx.resources_per_role_counts
+    roles_per_resource_counts = ctx.roles_per_resource_counts
+    total_assignments = ctx.total_assignments
+
+    # Slightly tighter rows to leave more room for padding around the figure
+    row_height_px = 12
+    base_h = n_res * row_height_px
+    # Titles, count row, legend, margins, modebar
+    plot_height = max(480, min(2400, base_h + 360))
+
+    if n_roles == 0 or n_res == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title={"text": "Resource × Role matrix", "x": 0.5, "xanchor": "center"},
+            plot_bgcolor="white",
+            annotations=[
+                {
+                    "text": "No Resource–Role assignments in the filtered log.",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "x": 0.5,
+                    "y": 0.5,
+                    "showarrow": False,
+                }
+            ],
+        )
+    else:
+        from evaluation.evaluate import role_palette
+
+        palette = RESOURCE_ROLE_MATRIX_PALETTE
+        role_colors = role_palette(palette, n_roles)
+        per_role_count = [int(resources_per_role_counts.get(r, 0)) for r in roles_sorted]
+        roles_count_per_res = [int(roles_per_resource_counts.get(r, 0)) for r in resources_sorted]
+        max_role_count = max(roles_count_per_res) if roles_count_per_res else 1
+        bar_axis_max = max(max_role_count * 1.12, 1.0)
+        side_bar_gray = "#4a4a4a"
+        # Bar strip is ~1/9 of the matrix width; uniform bar height (thickness) for every resource
+        bar_y_width = 0.7
+        # 3 columns: [label | heatmap | bars]
+        # Paper-width fraction: scale with longest resource id (two-line “Total number …” is ~18+ chars at this font).
+        max_resource_label_len = max((len(str(r)) for r in resources_sorted), default=0)
+        min_chars_for_label_strip = 18
+        label_col = min(
+            0.16,
+            max(
+                0.09,
+                0.0065
+                * (max(min_chars_for_label_strip, max_resource_label_len + 8)),
+            ),
+        )
+        bar_col = 0.08
+        mid_col = 1.0 - label_col - bar_col
+        # As tight as make_subplots allows so the count row sits immediately under the matrix
+        count_matrix_vertical_gap = 0.0
+        # Slight breathing room between label | heatmap | bar columns (Plotly: fraction of total width)
+        rrm_column_gutter = 0.004
+        # Count row: match strip height to ~one text line (11px) + padding; cap ratio so short figures stay readable
+        count_row_y = 0.2
+        count_row_y_min, count_row_y_max = 0.17, 0.23
+        count_row_strip_px = 42
+        count_row_h_ratio = min(0.08, max(0.02, count_row_strip_px / float(plot_height)))
+        top_row_h_ratio = 1.0 - count_row_h_ratio
+        # At least this many layout pixels for the first column: label_col * width
+        rrm_min_plot_width = 1024
+        fig = make_subplots(
+            rows=2,
+            cols=3,
+            row_heights=[top_row_h_ratio, count_row_h_ratio],
+            column_widths=[label_col, mid_col, bar_col],
+            vertical_spacing=count_matrix_vertical_gap,
+            horizontal_spacing=rrm_column_gutter,
+            subplot_titles=("", "", "Number of roles<br>per resource", "", "", ""),
+            specs=[[{}, {}, {}], [{}, {}, {}]],
+        )
+        # (1,1) label column: lock x so reset/autoscale in the client can’t pick a “zoomed” x-range
+        fig.update_xaxes(
+            visible=False,
+            range=[0, 1],
+            showticklabels=False,
+            automargin=False,
+            autorange=False,
+            fixedrange=True,
+            row=1,
+            col=1,
+        )
+
+        matrix_empty_color = "#ededed"
+        matrix_col_gap = 0.02
+        matrix_col_width = 1.0 - (2 * matrix_col_gap)
+        for j, role in enumerate(roles_sorted):
+            role_color = role_colors[j]
+            legendgroup = f"role:{role}"
+            cell_colors = []
+            cell_hover = []
+            for i, resource in enumerate(resources_sorted):
+                has_role = z[i][j] != 0
+                cell_colors.append(role_color if has_role else matrix_empty_color)
+                cell_hover.append(
+                    f"Resource: {resource}<br>Role: {role}"
+                    if has_role
+                    else f"Resource: {resource}<br>Role: {role}<br>No assignment"
+                )
+
+            fig.add_trace(
+                go.Bar(
+                    x=[matrix_col_width] * n_res,
+                    y=resources_sorted,
+                    base=[j + matrix_col_gap] * n_res,
+                    orientation="h",
+                    width=bar_y_width,
+                    name=role,
+                    marker=dict(color=cell_colors, line=dict(width=0)),
+                    hovertext=cell_hover,
+                    hoverinfo="text",
+                    showlegend=False,
+                    legendgroup=legendgroup,
+                ),
+                row=1,
+                col=2,
+            )
+            # Separate legend swatch keeps the legend color tied to the role color, not the first cell's color.
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    name=role,
+                    marker=dict(size=12, color=role_color, symbol="square"),
+                    legendgroup=legendgroup,
+                    showlegend=True,
+                ),
+                row=1,
+                col=2,
+            )
+        fig.add_trace(
+            go.Bar(
+                x=roles_count_per_res,
+                y=resources_sorted,
+                orientation="h",
+                width=bar_y_width,
+                marker=dict(color=side_bar_gray, line=dict(width=0)),
+                text=[str(c) for c in roles_count_per_res],
+                textposition="outside",
+                textfont=dict(size=10, color=side_bar_gray),
+                cliponaxis=False,
+                showlegend=False,
+                hovertemplate="Resource: %{y}<br>Number of roles: %{x}<extra></extra>",
+            ),
+            row=1,
+            col=3,
+        )
+        # Left column: anchor at the right edge of the cell so text sits next to the matrix (not in wide empty col1)
+        label_anchor_x = 0.99
+        fig.add_trace(
+            go.Scatter(
+                x=[label_anchor_x] * len(resources_sorted),
+                y=resources_sorted,
+                mode="text",
+                text=resources_sorted,
+                textposition="middle left",
+                textfont=dict(size=10, color="#333333"),
+                cliponaxis=False,
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )
+        for j, role in enumerate(roles_sorted):
+            role_count = per_role_count[j]
+            legendgroup = f"role:{role}"
+            fig.add_trace(
+                go.Scatter(
+                    x=[j + 0.5],
+                    y=[count_row_y],
+                    mode="text",
+                    text=[str(role_count)],
+                    textfont=dict(size=11, color="#333333"),
+                    textposition="middle center",
+                    legendgroup=legendgroup,
+                    showlegend=False,
+                    hovertext=f"Role: {role}<br>Total number of resources: {role_count}",
+                    hoverinfo="text",
+                ),
+                row=2,
+                col=2,
+            )
+        fig.add_trace(
+            go.Scatter(
+                x=[0.5],
+                y=[count_row_y],
+                mode="text",
+                text=[str(total_assignments)],
+                textposition="middle center",
+                textfont=dict(size=11, color="#333333"),
+                showlegend=False,
+                hovertext=f"All roles: {total_assignments} assignments (resource–role links)",
+                hoverinfo="text",
+            ),
+            row=2,
+            col=3,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[label_anchor_x],
+                y=[count_row_y],
+                mode="text",
+                text=["Total number<br>of roles"],
+                textposition="middle left",
+                textfont=dict(size=11, color="#333333"),
+                cliponaxis=False,
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=2,
+            col=1,
+        )
+
+        fig.update_xaxes(
+            type="linear",
+            range=[0, n_roles],
+            showticklabels=False,
+            showgrid=False,
+            title_text="",
+            automargin=False,
+            autorange=False,
+            row=1,
+            col=2,
+        )
+        fig.update_xaxes(
+            title_text="",
+            range=[0, bar_axis_max],
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            automargin=False,
+            row=1,
+            col=3,
+        )
+        fig.update_xaxes(
+            type="linear",
+            range=[0, n_roles],
+            showticklabels=False,
+            showgrid=False,
+            title_text="",
+            automargin=False,
+            autorange=False,
+            row=2,
+            col=2,
+        )
+        fig.update_xaxes(
+            visible=False,
+            range=[0, 1],
+            showticklabels=False,
+            automargin=False,
+            row=2,
+            col=3,
+        )
+        fig.update_xaxes(
+            visible=False,
+            range=[0, 1],
+            showticklabels=False,
+            automargin=False,
+            autorange=False,
+            fixedrange=True,
+            row=2,
+            col=1,
+        )
+
+        fig.update_yaxes(
+            title_text="",
+            type="category",
+            categoryorder="array",
+            categoryarray=resources_sorted,
+            autorange="reversed",
+            showticklabels=False,
+            automargin=False,
+            row=1,
+            col=2,
+        )
+        fig.update_yaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=resources_sorted,
+            autorange="reversed",
+            showticklabels=False,
+            showgrid=False,
+            gridcolor="#eeeeee",
+            automargin=False,
+            row=1,
+            col=3,
+        )
+        # (1,1) shares y with heatmap + bars; tick labels are the text trace above, not axis ticks
+        fig.update_yaxes(
+            matches="y2",
+            showticklabels=False,
+            showline=False,
+            showgrid=False,
+            automargin=False,
+            row=1,
+            col=1,
+        )
+        # (1,3) y matches (1,2) — axis names: row1 col2 → y2, col3 → y3
+        fig.update_yaxes(row=1, col=3, matches="y2")
+        # Lock the count-row y so double-click/reset in the client can’t expand a padded y-range
+        fig.update_yaxes(
+            title_text="",
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            range=[count_row_y_min, count_row_y_max],
+            automargin=False,
+            autorange=False,
+            fixedrange=True,
+            row=2,
+            col=2,
+        )
+        fig.update_yaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            automargin=False,
+            fixedrange=True,
+            matches="y5",
+            row=2,
+            col=3,
+        )
+        # (2,1) shares the count row y-scale with (2,2)/(2,3) so the label and counts align
+        fig.update_yaxes(
+            showticklabels=False,
+            showline=False,
+            showgrid=False,
+            automargin=False,
+            fixedrange=True,
+            matches="y5",
+            row=2,
+            col=1,
+        )
+
+        # Margins + width: fixed width gives a floor for label column pixels; uirevision reduces surprise relayouts
+        rrm_width = max(rrm_min_plot_width, int(plot_height * 0.5))
+        fig.update_layout(
+            title={
+                "text": "Resource × Role matrix",
+                "x": 0.5,
+                "xanchor": "center",
+                "y": 0.97,
+                "yanchor": "top",
+            },
+            uirevision="resource_role_matrix",
+            width=rrm_width,
+            height=plot_height,
+            plot_bgcolor="white",
+            margin=dict(t=120, b=100, l=100, r=100),
+            legend=dict(
+                title=dict(text="Role"),
+                orientation="h",
+                groupclick="togglegroup",
+                yanchor="top",
+                y=-0.11,
+                xanchor="center",
+                x=0.5,
+            ),
+            barmode="overlay",
+        )
+        if fig.layout.annotations:
+            for i, ann in enumerate(fig.layout.annotations):
+                ann_text = getattr(ann, "text", None) or ""
+                if "Number of roles" in str(ann_text) and "per resource" in str(ann_text):
+                    fig.layout.annotations[i].update(
+                        font=dict(size=11, color="#333333"),
+                        yshift=-10,
+                    )
+
+        # Count row x under heatmap
+        fig.update_xaxes(row=2, col=2, matches="x2")
+        # Spell out domain on every cartesian axis so the subplot grid is explicit in the JSON output
+        layout_dict = fig.to_dict().get("layout") or {}
+        for axis_name, axis_obj in layout_dict.items():
+            if not (axis_name.startswith("xaxis") or axis_name.startswith("yaxis")):
+                continue
+            if not isinstance(axis_obj, dict):
+                continue
+            dom = axis_obj.get("domain")
+            if dom is not None and len(dom) == 2:
+                fig.update_layout(
+                    {axis_name: {"domain": [float(dom[0]), float(dom[1])]}}
+                )
+
+    return fig
+
+
+def format_resource_role_matrix_table(meta: pd.DataFrame) -> list[dict]:
+    table_df = meta.drop(columns=["roles_key"], errors="ignore").copy()
+    if "Roles" in table_df.columns:
+        table_df["Roles"] = table_df["Roles"].apply(
+            lambda roles: ", ".join(str(role) for role in roles)
+            if isinstance(roles, list)
+            else roles
+        )
+    return table_df.to_dict(orient="records")
+
+
+def build_resource_role_mapping(ctx: ResourceRoleMatrixContext) -> list[list[bool]]:
+    """Boolean resource×role grid: mapping[i][j] is True when that assignment exists."""
+    return [
+        [ctx.z[i][j] != 0 for j in range(ctx.n_roles)]
+        for i in range(ctx.n_res)
+    ]
+
+
+def resource_role_matrix_data(ctx: ResourceRoleMatrixContext) -> ResourceRoleMatrixData:
+    mapping = build_resource_role_mapping(ctx)
+    assignments = [
+        {"resource": ctx.resources_sorted[i], "role": ctx.roles_sorted[j]}
+        for i in range(ctx.n_res)
+        for j in range(ctx.n_roles)
+        if mapping[i][j]
+    ]
+    return ResourceRoleMatrixData(
+        resources=ctx.resources_sorted,
+        roles=ctx.roles_sorted,
+        mapping=mapping,
+        z=ctx.z,
+        assignments=assignments,
+        table=format_resource_role_matrix_table(ctx.meta),
+        metrics=ctx.metrics,
+    )
+
+
+def resource_role_matrix(df):
+    """
+    Resource×Role assignment matrix (heatmap), Role–Activity edges, and summary metrics
+    for organizational mining style views.
+    """
+    ctx = compute_resource_role_matrix_context(df)
+    matrix_data = resource_role_matrix_data(ctx)
+    plots = resource_role_ordering_plots(ctx, matrix_data)
+
+    return ResourceRoleMatrixOutputModel(
+        table=matrix_data.table,
+        plot=json.dumps(plots["row_degree"]),
+        plots=plots,
+        nodes=ctx.nodes,
+        edges=ctx.edges,
+        metrics=ctx.metrics,
+    )
+
+
+def evaluate_resource_role_matrix_quality(
+    matrix_data: ResourceRoleMatrixData,
+) -> tuple[ResourceRoleMatrixEvaluations, "MatrixEvaluationResult"]:
+    from evaluation.evaluate import (
+        ORDERING_VARIANT_ROW_DEGREE,
+        evaluate_ordering_variants,
+    )
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    bundle = evaluate_ordering_variants(
+        matrix_model,
+        palette=RESOURCE_ROLE_MATRIX_PALETTE,
+        include_random_baselines=True,
+        random_seed_count=100,
+    )
+    evaluations = ResourceRoleMatrixEvaluations(
+        color_discriminability=ResourceRoleMatrixColorDiscriminability(
+            **bundle.color_discriminability.to_dict()
+        ),
+        orderings={
+            variant: ResourceRoleMatrixQualityEvaluation(
+                **result.ordering_metrics_dict()
+            )
+            for variant, result in bundle.orderings.items()
+        },
+        random_baselines=[
+            ResourceRoleMatrixQualityEvaluation(**result.ordering_metrics_dict())
+            for result in bundle.random_baselines
+        ],
+    )
+    return evaluations, bundle.orderings[ORDERING_VARIANT_ROW_DEGREE]
+
+
+def resource_role_figure_for_matrix(
+    ctx: ResourceRoleMatrixContext, matrix
+) -> go.Figure:
+    """Render an ordering with the same visual encoding as the main matrix."""
+    z = [
+        [column_index + 1 if value else 0 for column_index, value in enumerate(row)]
+        for row in matrix.values.astype(bool).tolist()
+    ]
+    ordered_ctx = ResourceRoleMatrixContext(
+        roles_sorted=matrix.roles,
+        n_roles=len(matrix.roles),
+        resources_sorted=matrix.resources,
+        n_res=len(matrix.resources),
+        z=z,
+        resources_per_role_counts=ctx.resources_per_role_counts,
+        roles_per_resource_counts=ctx.roles_per_resource_counts,
+        total_assignments=ctx.total_assignments,
+        nodes=ctx.nodes,
+        edges=ctx.edges,
+        metrics=ctx.metrics,
+        meta=ctx.meta,
+    )
+    return build_resource_role_matrix_figure(ordered_ctx)
+
+
+def resource_role_ordering_plots(
+    ctx: ResourceRoleMatrixContext,
+    matrix_data: ResourceRoleMatrixData,
+) -> dict[str, dict[str, Any]]:
+    """Return comparable Plotly figures for every supported matrix ordering."""
+    from evaluation.evaluate import build_ordering_variants
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+    from evaluation.ordering import random_ordering
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    plot_matrices = build_ordering_variants(matrix_model)
+    plot_matrices["random_0"] = random_ordering(matrix_model, seed=0)
+
+    return {
+        variant: json.loads(resource_role_figure_for_matrix(ctx, matrix).to_json())
+        for variant, matrix in plot_matrices.items()
+    }
+
+
+def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
+    """Quality metrics, heuristic findings, and comparable ordering plots."""
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+    from evaluation.plotly_heuristics import evaluate_plotly_figure
+
+    ctx = compute_resource_role_matrix_context(df)
+    matrix_data = resource_role_matrix_data(ctx)
+    evaluations, _ = evaluate_resource_role_matrix_quality(matrix_data)
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    plots = resource_role_ordering_plots(ctx, matrix_data)
+    return ResourceRoleMatrixEvaluationModel(
+        evaluations=evaluations,
+        metric_bounds={
+            "row_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "column_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "degree_order_agreement": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "row_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0,
+                upper=float((len(matrix_model.roles) + 1) // 2),
+                higher_is_better=False,
+            ),
+            "column_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0,
+                upper=float((len(matrix_model.resources) + 1) // 2),
+                higher_is_better=False,
+            ),
+        },
+        plots=plots,
+        heuristic_report=PlotlyHeuristicReportModel(
+            **evaluate_plotly_figure(plots["row_degree"]).to_dict()
+        ),
+    )
+
 
 #TODO: remove and replace by resource_within_role_normalization
 def resource_role_average_duration(df, time_unit: str ='minutes', normalize: bool = True):
@@ -521,13 +1378,13 @@ def resource_within_role_normalization(df):
         role_average_duration_minutes = (role_df['Average Case Duration'].dt.total_seconds()/ 60).round(2)
         fig.add_trace(
             go.Bar(
-                y=role_df['Resource'], 
+                y=role_df['Resource'],
                 x=role_average_duration_minutes,
                 marker=dict(color=BLUE),
                 hovertemplate='Average Case Duration: %{x} minutes<extra></extra>',
                 orientation='h'
             ),
-            row=i, 
+            row=i,
             col=1
         )
 
@@ -536,8 +1393,8 @@ def resource_within_role_normalization(df):
         fig.update_xaxes(title_text="Average Case Duration [min]", row=i, col=1)
 
     fig.update_layout(
-        height=576 * len(unique_roles), 
-        #width=1200, 
+        height=576 * len(unique_roles),
+        #width=1200,
         title_text="Average Case Duration (in Minutes) per Role and Resource",
         plot_bgcolor='white',
         showlegend = False,
@@ -585,7 +1442,7 @@ def resources_per_activity(df, count: bool = True):
     fig.update_layout(
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
-        plot_bgcolor='white',  
+        plot_bgcolor='white',
         title={
             'x':0.5,
             'xanchor': 'center'
@@ -611,7 +1468,7 @@ def activities_per_role(df):
     fig.update_layout(
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
-        plot_bgcolor='white',  
+        plot_bgcolor='white',
         title={
             'y':0.9,
             'x':0.5,
@@ -639,7 +1496,7 @@ def activities_per_role_new(df):
         activities_per_role.append(activities)
         # Append the number of roles for the current resource
         activitiy_count.append(role_df['Activity'].nunique())
-        
+
     # Create a new df
     result_df = pd.DataFrame({
         'Role': unique_roles,
@@ -658,9 +1515,9 @@ def activities_per_role_new(df):
     fig.update_traces(hovertemplate='Activities: <br>%{customdata}', customdata=hovertext)
 
     fig.update_layout(
-        #width=1200, 
-        height=576,  
-        plot_bgcolor='white',  
+        #width=1200,
+        height=576,
+        plot_bgcolor='white',
         title={
             'y':0.9,
             'x':0.5,
@@ -785,7 +1642,7 @@ def activity_resource_comparison(df, normalize: bool = False):
             activity_average_duration_minutes = (activity_df['Average Case Duration'].dt.total_seconds()/60).round(2)
             fig.add_trace(
                 go.Bar(
-                    y=activity_df['Resource'], 
+                    y=activity_df['Resource'],
                     x=activity_average_duration_minutes,
                     marker=dict(color=BLUE),
                     hovertemplate='Average Case Duration: %{x} minutes<extra></extra>',
@@ -798,7 +1655,7 @@ def activity_resource_comparison(df, normalize: bool = False):
             fig.update_xaxes(range=[0, max_duration + 1], row=i, col=1)
 
         fig.update_layout(
-            height=576 * len(unique_activities), 
+            height=576 * len(unique_activities),
             #width=1200,
             title_text="Average Case Duration (in Minutes) per Activity and Resource",
             showlegend=False,
@@ -897,6 +1754,258 @@ def activity_resource_comparison(df, normalize: bool = False):
         big_plot = fig.to_json()
         return OutputModel(table=prettify_df(normalized_data).replace({np.nan: None}).to_dict(orient="records"), plot=plot, big_plot=big_plot)
 
+def normalized_activity_resource_duration_matrix(df):
+    """
+    Bar-cell matrix for normalized average case duration per Activity x Resource.
+
+    Each activity is normalized independently so colors answer:
+    "Which resources are fastest/normal/slowest for this activity?"
+    """
+    grouped = df.groupby(["Activity", "Resource"])
+    result_rows = []
+
+    for (activity, resource), group_df in grouped:
+        average_duration = group_df.groupby("Case ID")["Duration"].sum().mean()
+        result_rows.append(
+            {
+                "Activity": activity,
+                "Resource": resource,
+                "Average Case Duration": average_duration,
+            }
+        )
+
+    result_df = pd.DataFrame(result_rows)
+    if result_df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title={
+                "text": "Normalized Average Case Duration per Activity and Resource",
+                "x": 0.5,
+                "xanchor": "center",
+            },
+            plot_bgcolor="white",
+            annotations=[
+                {
+                    "text": "No Activity-Resource duration data in the filtered log.",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "x": 0.5,
+                    "y": 0.5,
+                    "showarrow": False,
+                }
+            ],
+        )
+        return OutputModel(table=[], plot=fig.to_json())
+
+    result_df["Average Case Duration (Minutes)"] = (
+        result_df["Average Case Duration"].dt.total_seconds() / 60
+    ).round(2)
+
+    def normalize_activity_duration(activity_minutes: pd.Series):
+        min_duration = activity_minutes.min()
+        max_duration = activity_minutes.max()
+        if min_duration == max_duration:
+            return pd.Series([0.5] * len(activity_minutes), index=activity_minutes.index)
+        return (activity_minutes - min_duration) / (max_duration - min_duration)
+
+    result_df["Normalized Duration"] = result_df.groupby("Activity")[
+        "Average Case Duration (Minutes)"
+    ].transform(normalize_activity_duration)
+
+    def classify_duration(normalized_duration):
+        if normalized_duration == 0:
+            return "Fastest"
+        if normalized_duration == 1:
+            return "Slowest"
+        return "Normal"
+
+    result_df["Duration Class"] = result_df["Normalized Duration"].apply(classify_duration)
+
+    resources_sorted = sorted(result_df["Resource"].dropna().unique().tolist())
+    pivot_norm = result_df.pivot(index="Activity", columns="Resource", values="Normalized Duration")
+    # Reorder activities by their resource-duration signature so similar patterns are near each other.
+    activity_order_df = pivot_norm.reindex(columns=resources_sorted).fillna(0.5)
+    activities_sorted = (
+        activity_order_df.assign(_mean=activity_order_df.mean(axis=1))
+        .sort_values(by=["_mean"] + resources_sorted, ascending=[False] + [True] * len(resources_sorted))
+        .drop(columns=["_mean"])
+        .index.tolist()
+    )
+
+    records_by_pair = {
+        (row["Activity"], row["Resource"]): row
+        for _, row in result_df.iterrows()
+    }
+
+    color_by_class = {
+        "Slowest": "#EF4444",
+        "Normal": "#3B82F6",
+        "Fastest": "#7AC70C",
+        "No data": "#F1F3F5",
+    }
+    bar_y_width = 0.78
+    cell_gap = 0.03
+    cell_width = 1.0 - (2 * cell_gap)
+    label_col = min(
+        0.30,
+        max(0.16, 0.0065 * max((len(str(a)) for a in activities_sorted), default=0)),
+    )
+    matrix_col = 1.0 - label_col
+    row_height_px = 26
+    plot_height = max(520, min(2600, len(activities_sorted) * row_height_px + 260))
+    plot_width = max(1050, int(plot_height * 1.15))
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        column_widths=[label_col, matrix_col],
+        horizontal_spacing=0.004,
+        specs=[[{}, {}]],
+    )
+
+    label_anchor_x = 0.99
+    fig.add_trace(
+        go.Scatter(
+            x=[label_anchor_x] * len(activities_sorted),
+            y=activities_sorted,
+            mode="text",
+            text=activities_sorted,
+            textposition="middle left",
+            textfont=dict(size=10, color="#222222"),
+            cliponaxis=False,
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=1,
+    )
+
+    class_order = ["Slowest", "Normal", "Fastest", "No data"]
+    class_legend_seen = {duration_class: False for duration_class in class_order}
+    for j, resource in enumerate(resources_sorted):
+        cells_by_class = {
+            duration_class: {"activities": [], "hover": []}
+            for duration_class in class_order
+        }
+        for activity in activities_sorted:
+            record = records_by_pair.get((activity, resource))
+            if record is None:
+                duration_class = "No data"
+                hover_text = f"Activity: {activity}<br>Resource: {resource}<br>No data"
+            else:
+                duration_class = record["Duration Class"]
+                duration_minutes = record["Average Case Duration (Minutes)"]
+                normalized_duration = record["Normalized Duration"]
+                hover_text = (
+                    f"Activity: {activity}<br>"
+                    f"Resource: {resource}<br>"
+                    f"Average Case Duration: {duration_minutes:.2f} minutes<br>"
+                    f"Normalized Duration: {normalized_duration:.2f}<br>"
+                    f"Class: {duration_class}"
+                )
+            cells_by_class[duration_class]["activities"].append(activity)
+            cells_by_class[duration_class]["hover"].append(hover_text)
+
+        for duration_class in class_order:
+            class_activities = cells_by_class[duration_class]["activities"]
+            if not class_activities:
+                continue
+
+            should_show_legend = not class_legend_seen[duration_class]
+            class_legend_seen[duration_class] = True
+            fig.add_trace(
+                go.Bar(
+                    x=[cell_width] * len(class_activities),
+                    y=class_activities,
+                    base=[j + cell_gap] * len(class_activities),
+                    orientation="h",
+                    width=bar_y_width,
+                    name=duration_class,
+                    legendgroup=duration_class,
+                    showlegend=should_show_legend,
+                    marker=dict(color=color_by_class[duration_class], line=dict(width=0)),
+                    hovertext=cells_by_class[duration_class]["hover"],
+                    hoverinfo="text",
+                ),
+                row=1,
+                col=2,
+            )
+
+    fig.update_xaxes(
+        visible=False,
+        range=[0, 1],
+        showticklabels=False,
+        automargin=False,
+        autorange=False,
+        fixedrange=True,
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=activities_sorted,
+        autorange="reversed",
+        showticklabels=False,
+        showline=False,
+        showgrid=False,
+        automargin=False,
+        row=1,
+        col=1,
+    )
+    fig.update_xaxes(
+        type="linear",
+        range=[0, len(resources_sorted)],
+        tickmode="array",
+        tickvals=[j + 0.5 for j in range(len(resources_sorted))],
+        ticktext=resources_sorted,
+        tickangle=-90,
+        side="top",
+        showgrid=False,
+        zeroline=False,
+        automargin=True,
+        row=1,
+        col=2,
+    )
+    fig.update_yaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=activities_sorted,
+        autorange="reversed",
+        showticklabels=False,
+        automargin=False,
+        row=1,
+        col=2,
+    )
+
+    fig.update_layout(
+        title={
+            "text": "Normalized Average Case Duration per Activity and Resource",
+            "x": 0.5,
+            "xanchor": "center",
+            "y": 0.97,
+            "yanchor": "top",
+        },
+        width=plot_width,
+        height=plot_height,
+        plot_bgcolor="white",
+        margin=dict(t=150, b=70, l=80, r=180),
+        legend=dict(
+            title=dict(text="Case Duration"),
+            groupclick="togglegroup",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+        ),
+        barmode="overlay",
+    )
+
+    table_df = result_df.drop(columns=["Average Case Duration"])
+    table_df["Normalized Duration"] = table_df["Normalized Duration"].round(2)
+    table_records = prettify_df(table_df).replace({np.nan: None}).to_dict(orient="records")
+    return OutputModel(table=table_records, plot=fig.to_json())
+
 def slowest_resource_per_activity(df):
     # Group by Activity and then Resource
     grouped_activities = df.groupby(['Activity', 'Resource'])
@@ -926,9 +2035,9 @@ def slowest_resource_per_activity(df):
     slowest = result_df.copy()
     #slowest['Average Case Duration'] = (slowest['Average Case Duration'].dt.total_seconds() / 60).round(2)
 
-    fig = px.bar(slowest, 
-        y='Activity', 
-        x='Average Case Duration (Minutes)', 
+    fig = px.bar(slowest,
+        y='Activity',
+        x='Average Case Duration (Minutes)',
         title='Slowest Resource per Activity',
         labels={'Average Case Duration': 'Average Case Duration [min]'},
         orientation='h',
@@ -1047,12 +2156,12 @@ def total_duration_per_resource_and_activity(df):
         x='Percentage Time Spent (%)',
         y='Resource',
         color='Activity',
-        orientation='h', 
+        orientation='h',
         title='Percentage of Time Spent on Each Activity by Resource',
         labels={'Percentage Time Spent (%)': 'Percentage of Total Time Spent'},
         barmode='stack',
-        custom_data=['Activity', 'Percentage Time Spent (%)'], 
-        color_discrete_sequence=color_palette 
+        custom_data=['Activity', 'Percentage Time Spent (%)'],
+        color_discrete_sequence=color_palette
     )
 
     # Custom hover text
@@ -1064,8 +2173,8 @@ def total_duration_per_resource_and_activity(df):
     fig.update_layout(
         plot_bgcolor='white',
         #showlegend=False,
-        #width=1200,  
-        height=800,  
+        #width=1200,
+        height=800,
         xaxis=dict(dtick=10,title=dict(standoff=35)),
         #yaxis=dict(pad=10),
         bargap=0.3,
@@ -1079,8 +2188,8 @@ def total_duration_per_resource_and_activity(df):
         legend=dict(
             orientation="h",
             y=-0.2,
-            xanchor='center',  
-            x=0.45  
+            xanchor='center',
+            x=0.45
         )
     )
 
@@ -1145,7 +2254,7 @@ def capacity_utilization_resource(df, work_hours_per_day=7.7, activity=""):
        # width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1187,7 +2296,7 @@ def capacity_utilization_resource_new(df):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1215,13 +2324,13 @@ def workload_distribution_per_resource(df):
 
     # Merge dfs
     result_df = pd.merge(total_time_role, total_time_resource, on='Resource')
-    
+
     # calculate relative time
     result_df['Percentage (%)'] = ((result_df['Total Time Worked in Role (hr)'] / result_df['Total Time Worked (hr)']) * 100).round(2)
-    
+
     # drop irrelevant columns
     result_df.drop(columns=['Total Time Worked', 'Total Time Worked (hr)'], inplace=True)
-    
+
     #return result_df
     workload_distribution_per_resource_plot = result_df.copy()
     unique_roles = workload_distribution_per_resource_plot['Role'].unique()
@@ -1246,7 +2355,7 @@ def workload_distribution_per_resource(df):
         height=800,  # Height in pixels
         plot_bgcolor='white',
         margin = {'pad': 15},
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1256,8 +2365,8 @@ def workload_distribution_per_resource(df):
         legend=dict(
             orientation="h",
             y=-0.2,
-            xanchor='center',  
-            x=0.45  
+            xanchor='center',
+            x=0.45
         )
     )
 
@@ -1301,7 +2410,7 @@ def total_duration_per_role(df):
     return result_df
 
 def total_duration_per_role_and_activity(df):
-    
+
     # Group by Role and Activity, sum durations to get the total time spent on each activity by each role
     result_df = df.groupby(['Role', 'Activity'])['Duration'].sum().reset_index()
 
@@ -1337,12 +2446,12 @@ def total_duration_per_role_and_activity(df):
         x='Percentage Time Spent (%)',
         y='Role',
         color='Activity',
-        orientation='h', 
+        orientation='h',
         title='Percentage of Time Spent on Each Activity by Role',
         labels={'Percentage Time Spent (%)': 'Percentage of Total Time Spent'},
         barmode='stack',
-        custom_data=['Activity', 'Percentage Time Spent (%)'], 
-        color_discrete_sequence=color_palette 
+        custom_data=['Activity', 'Percentage Time Spent (%)'],
+        color_discrete_sequence=color_palette
     )
 
     # Custom hover text
@@ -1354,8 +2463,8 @@ def total_duration_per_role_and_activity(df):
     fig.update_layout(
         plot_bgcolor='white',
         #showlegend=False,
-        #width=1200,  
-        height=800,  
+        #width=1200,
+        height=800,
         xaxis=dict(dtick=10,title=dict(standoff=35)),
         #yaxis=dict(pad=10),
         bargap=0.5,
@@ -1369,8 +2478,8 @@ def total_duration_per_role_and_activity(df):
         legend=dict(
             orientation="h",
             y=-0.2,
-            xanchor='center',  
-            x=0.45  
+            xanchor='center',
+            x=0.45
         )
     )
 
@@ -1419,7 +2528,7 @@ def capacity_utilization_role(df, work_hours_per_day=7.7):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1474,7 +2583,7 @@ def capacity_utilization_role_new(df):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1548,7 +2657,7 @@ def capacity_utilization_activity(df, work_hours_per_day=7.7):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9,
             'x':0.5,
@@ -1599,11 +2708,11 @@ def activity_case_duration(df):
         "Average Case Duration": average_duration_per_case #,
         #"Median Case Duration": median_duration_per_case
     })
-    
+
     ## Perform min-max normalization using lambda functions on both Average and Median Case Duration
     result_df['Normalized Average Case Duration'] = result_df['Average Case Duration'].apply(
         lambda x: (x - result_df['Average Case Duration'].min()) / (result_df['Average Case Duration'].max() - result_df['Average Case Duration'].min()))
-        
+
     #result_df['Normalized Median Case Duration'] = result_df['Median Case Duration'].apply(
     #    lambda x: (x - result_df['Median Case Duration'].min()) / (result_df['Median Case Duration'].max() - result_df['Median Case Duration'].min()))
 
@@ -1620,13 +2729,13 @@ def activity_case_duration(df):
         orientation='h',
         color_discrete_sequence=['#2066a8'])
 
-    # Custom hover text 
+    # Custom hover text
     fig.update_traces(hovertemplate='Average Case Duration: %{x:,.2f} minutes')
 
     fig.update_layout(
         plot_bgcolor='white',
-        #width=1200,  
-        height=576,  
+        #width=1200,
+        height=576,
         title={
             'y':0.9,
             'x':0.5,
@@ -1664,13 +2773,13 @@ def activity_workload_distribution_per_resource(df):
 
     # Merge dfs
     result_df = pd.merge(total_time_activity, total_time_resource, on='Resource')
-    
+
     # calculate relative time
     result_df['Percentage (%)'] = ((result_df['Total Time Spent on Activity (hr)'] / result_df['Total Time Worked (hr)']) * 100).round(2)
-    
+
     # drop irrelevant columns
     result_df.drop(columns=['Total Time Worked', 'Total Time Worked (hr)'], inplace=True)
-    
+
     return result_df
 
 def capacity_resource_activity(df):
@@ -1713,7 +2822,7 @@ def capacity_utilization_activity_new(df):
         #width=1200,  # Width in pixels
         height=576,  # Height in pixels
         plot_bgcolor='white',
-        xaxis=dict(dtick=10),  
+        xaxis=dict(dtick=10),
         title={
             'y':0.9, #-0.15, #0.9,
             'x':0.5,
@@ -1751,7 +2860,7 @@ def get_color_option_1(df):
         "Activity": unique_activities,
         "Average Case Duration": average_duration_per_case
     })
-    
+
     result_df['Normalized Average Case Duration'] = result_df['Average Case Duration'].apply(
         lambda x: (x - result_df['Average Case Duration'].min()) / (result_df['Average Case Duration'].max() - result_df['Average Case Duration'].min()))
 
@@ -1772,13 +2881,13 @@ def get_color_option_2(df):
 
     # Merge dfs
     result_df = pd.merge(total_time_role, total_time_resource, on='Resource')
-    
+
     # calculate relative time
     result_df['Percentage (%)'] = ((result_df['Total Time Worked in Role (hr)'] / result_df['Total Time Worked (hr)']) * 100).round(2)
-    
+
     # drop irrelevant columns
     result_df.drop(columns=['Total Time Worked', 'Total Time Worked (hr)'], inplace=True)
-    
+
     #return result_df
     workload_distribution_per_resource_plot = result_df.copy()
     unique_roles = workload_distribution_per_resource_plot['Role'].unique()
@@ -1789,7 +2898,7 @@ def get_color_option_2(df):
     activity_role_df = pd.DataFrame(activities_per_role(df).table)
     unique_activities = activity_role_df['Activity'].unique()
     activity_color_mapping = {activity: split_equal([role_color_mapping[role[1]] for role in activity_role_df.loc[activity_role_df['Activity']==activity, 'Role'].items()]) for activity in unique_activities}
-    
+
     return activity_color_mapping
 
 def get_color_option_3(df):
@@ -1855,7 +2964,7 @@ def get_color_option_4(df):
 
     # dictionary for dfg color coding
     activity_color_mapping = {activity: color_palette[i] for i, activity in enumerate(unique_activities)}
-    
+
     return activity_color_mapping
 
 def get_color_option_5(df):

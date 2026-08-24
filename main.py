@@ -1,3 +1,5 @@
+from config import API_URL
+
 import random
 from fastapi import FastAPI, Query, Path, Body, Request, HTTPException, UploadFile, File, Cookie, Depends
 from fastapi.responses import JSONResponse, FileResponse
@@ -32,7 +34,9 @@ TEST_FILE="hardcoded/PurchasingExamplePseudo.csv"
 for filename in os.listdir(FILES_DIR):
     os.remove(f"{FILES_DIR}/{filename}")
 
-app = FastAPI()
+app = FastAPI(
+    servers=[{"url": API_URL, "description": "Configured API base URL"}],
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,6 +61,8 @@ from pm import (
     role_average_duration,
     resource_average_duration,
     resource_roles,
+    resource_role_matrix,
+    resource_role_matrix_evaluation,
     resource_role_average_duration,
     resource_within_role_normalization,
     roles_per_activity,
@@ -64,6 +70,7 @@ from pm import (
     activities_per_role,
     activity_average_duration_with_roles,
     activity_resource_comparison,
+    normalized_activity_resource_duration_matrix,
     slowest_resource_per_activity,
     calculate_working_days,
     capacity_utilization_resource,
@@ -78,7 +85,7 @@ from pm import (
     capacity_utilization_activity_new,
     activities_per_role_new,
     info_panel_file,
-    filter_values_from_df, 
+    filter_values_from_df,
     AnalysisFilterModel,
     get_color_option_1,
     get_color_option_2,
@@ -108,7 +115,7 @@ def get_dataframe_from_session(session_id: str, session_dict: dict, panel_id: st
 def set_dataframe_session(session_id: str, df: pd.DataFrame, df_type: str, panel_id: str = "default"):
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     session_data = sessions.get(session_id)
     if not session_data or "panels" not in session_data:
         raise HTTPException(status_code=400, detail="Session data is incomplete")
@@ -212,7 +219,7 @@ async def upload(file: UploadFile, panel_id: str = Query(...)):
     file_location = f"{FILES_DIR}/{session_id}.csv"
     with open(file_location, "wb") as f:
         f.write(await file.read())
-    if not isinstance(file, UploadFile): 
+    if not isinstance(file, UploadFile):
         await file.close()
     df = process_file(file_location)
 
@@ -230,13 +237,13 @@ async def upload(file: UploadFile, panel_id: str = Query(...)):
 
     try:
         image_base64, metrics, nodes, edges = describe_df(df)
-        
+
         response = JSONResponse(content={
-            "image": image_base64,         
-            "table": metrics,              
-            "dfg": {                       
-                "nodes": nodes,            
-                "edges": edges             
+            "image": image_base64,
+            "table": metrics,
+            "dfg": {
+                "nodes": nodes,
+                "edges": edges
             },
             "renderAnalysis": True,
             "activity": df["Activity"].unique().tolist(),
@@ -300,7 +307,11 @@ async def check_session(request: Request, call_next):
         del sessions[session_id]
 
     response = await call_next(request)
-    if current_session_id and not session:
+    if (
+        current_session_id
+        and not session
+        and "session_id=" not in response.headers.get("set-cookie", "")
+    ):
         response.delete_cookie(key="session_id")
     return response
 
@@ -338,12 +349,12 @@ async def node_hover_detail(request_body: dict = Body(...), session_id: str = De
     panel_id = request_body.get("panel_id")
 
     df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
-    
+
     return get_node_hover_details(df)
 
 @app.post("/node_selection_detail")
 async def node_selection_detail(request_body: dict = Body(...), session_id: str = Depends(get_session_id)):
-    
+
     activity = request_body.get("activity")
     panel_id = request_body.get("panel_id")
 
@@ -406,14 +417,14 @@ async def remove_panel(panel_id: str = Query(...), session_id: str = Depends(get
 
 @app.post("/filter_analysis")
 async def receive_filter_analysis(analysis_filter_model: AnalysisFilterModel, session_id: str = Depends(get_session_id)):
-    
+
     # extract panel_id from request body and remove it from the model for filtering
-    panel_id = analysis_filter_model.panel_id  
+    panel_id = analysis_filter_model.panel_id
     analysis_filter_model_dict = analysis_filter_model.model_dump()
     analysis_filter_model_dict.pop("panel_id", None)
 
     df_full = get_dataframe_from_session(session_id, sessions, panel_id, "dataframe")
-    
+
     original_columns = df_full.columns
     df_full.columns = [col.lower() for col in df_full.columns]
 
@@ -437,11 +448,11 @@ async def receive_filter_analysis(analysis_filter_model: AnalysisFilterModel, se
 
     set_dataframe_session(session_id, df_filtered, "filtered_dataframe", panel_id)
 
-    return {"filtered_data": df_filtered.to_dict(orient="records")} 
+    return {"filtered_data": df_filtered.to_dict(orient="records")}
 
 @app.get("/infoPanel")
 async def readInfoPanelFile(session_id: str = Depends(get_session_id)):
-    file_path = "data/InfoPanel.json" 
+    file_path = "data/InfoPanel.json"
     if os.path.exists(file_path):
         return FileResponse(file_path, media_type="application/json", filename="data.json")
     return {"error": "File not found"}
@@ -478,6 +489,16 @@ async def read_units(session_id: str = Depends(get_session_id), panel_id: str = 
     print(f"Received information for panel {panel_id}: {panel_id}")
     return resource_roles(df)
 
+@app.get("/resource_role_matrix")
+async def read_resource_role_matrix(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
+    df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
+    return resource_role_matrix(df)
+
+@app.get("/resource_role_matrix_evaluation")
+async def read_resource_role_matrix_evaluation(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
+    df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
+    return resource_role_matrix_evaluation(df)
+
 @app.get("/resource_role_duration")
 async def read_units(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
     df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
@@ -512,6 +533,11 @@ async def read_units(session_id: str = Depends(get_session_id), panel_id: str = 
 async def read_units(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
     df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
     return activity_resource_comparison(df, normalize=True)
+
+@app.get("/normalized_activity_resource_duration_matrix")
+async def read_normalized_activity_resource_duration_matrix(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
+    df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
+    return normalized_activity_resource_duration_matrix(df)
 
 @app.get("/slowest_resource")
 async def read_units(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
