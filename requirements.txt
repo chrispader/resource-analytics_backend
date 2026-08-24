@@ -1,9 +1,12 @@
 fastapi[all]>=0.95.0
 python-dotenv>=1.0.0
 matplotlib==3.8.2
+numpy>=1.26,<2
 pandas==2.1.4
 pm4py==2.7.9.1
 jinja2
 seaborn==0.13.1
 plotly>=5.18.0
 aiofiles
+scikit-image>=0.22.0
+pytest>=7.4.0

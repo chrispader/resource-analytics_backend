@@ -34,10 +34,31 @@ uvicorn main:app --reload --host 0.0.0.0 --port 9090
 
 The API is then available at `http://localhost:9090`.
 
+## Programmatic evaluation
+
+The `feat/evaluation-suite` branch adds matrix-data metrics, Plotly design heuristics, and the `/resource_role_matrix_evaluation` endpoint. It also contains a reproducible factorial experiment with three resource counts, three role counts, three density levels, three profile-diversity levels, and five deterministic replicates per condition.
+
+Generate and evaluate all 405 event logs with one command:
+
+```bash
+python -m experiments.role_matrix.workflow full \
+  --output generated/role-matrix-experiment
+```
+
+The workflow records its configuration, input hashes, source hashes, environment information, and result tables. See [`experiments/role_matrix/README.md`](experiments/role_matrix/README.md) for the separate generation and evaluation commands.
+
+Run the backend test suite with:
+
+```bash
+PYTHONPATH=. pytest -q
+```
+
 ## Main files
 
 - `main.py` defines the FastAPI endpoints and session handling.
 - `pm.py` contains the event-log analysis and Plotly figure generation.
+- `evaluation/` contains the reusable matrix metrics and heuristic checks.
+- `experiments/role_matrix/` contains the dataset generator and experiment runner.
 - `data/InfoPanel.json` contains the descriptions shown in the frontend.
 - `hardcoded/` contains sample event logs.
 

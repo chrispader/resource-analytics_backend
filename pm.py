@@ -15,7 +15,10 @@ import base64
 from io import BytesIO
 
 from pydantic import BaseModel
-from typing import Any
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from evaluation.evaluate import MatrixEvaluationResult
 
 class OutputModel(BaseModel):
     table: list[dict]
@@ -27,6 +30,102 @@ class OutputModel(BaseModel):
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
     metrics: dict[str, Any] | None = None
+
+
+class ResourceRoleMatrixOutputModel(OutputModel):
+    plots: dict[str, dict[str, Any]]
+
+class ResourceRoleMatrixData(BaseModel):
+    """
+    Resource×Role data derived from the event log.
+
+    Row/column order is fixed by `resources` and `roles`. Use `mapping[i][j]` for
+    programmatic checks; `z` is only the Plotly visualization encoding.
+    """
+
+    resources: list[str]
+    roles: list[str]
+    mapping: list[list[bool]]
+    z: list[list[int]]
+    assignments: list[dict[str, str]]
+    table: list[dict]
+    metrics: dict[str, Any]
+
+
+class ResourceRoleMatrixQualityEvaluation(BaseModel):
+    variant: str
+    seed: int | None = None
+    row_coherence: float
+    column_coherence: float
+    row_fragmentation: float
+    column_fragmentation: float
+    degree_order_agreement: float
+
+
+class ResourceRoleMatrixColorDiscriminability(BaseModel):
+    score: float
+    min_delta_e: float
+    mean_delta_e: float
+    max_delta_e: float
+    min_contrast_ratio: float
+    mean_contrast_ratio: float
+    max_contrast_ratio: float
+
+
+class ResourceRoleMatrixEvaluations(BaseModel):
+    """
+    Quality metrics grouped by ordering variant.
+
+    color_discriminability: order-independent checks for the visible colors.
+    orderings: named variants (e.g. row_degree, degree_based, similarity_based).
+    random_baselines: optional list of metrics from repeated random orderings.
+    """
+
+    color_discriminability: ResourceRoleMatrixColorDiscriminability
+    orderings: dict[str, ResourceRoleMatrixQualityEvaluation]
+    random_baselines: list[ResourceRoleMatrixQualityEvaluation] = []
+
+
+class ResourceRoleMatrixMetricBound(BaseModel):
+    lower: float
+    upper: float
+    higher_is_better: bool
+
+
+class PlotlyHeuristicRuleLabels(BaseModel):
+    visual_frames: list[str] = []
+    visual_structures: list[str] = []
+    visual_unities: list[str] = []
+    visual_primitives: list[str] = []
+    labeling: list[str] = []
+    interaction: list[str] = []
+    data_attributes: list[str] = []
+
+
+class PlotlyHeuristicFindingModel(BaseModel):
+    rule_id: str
+    heuristic: str
+    assistance: str
+    status: str
+    message: str
+    recommendation: str | None = None
+    labels: PlotlyHeuristicRuleLabels
+    evidence: dict[str, Any]
+    source: str
+
+
+class PlotlyHeuristicReportModel(BaseModel):
+    summary: dict[str, int]
+    feature_summary: dict[str, Any]
+    findings: list[PlotlyHeuristicFindingModel]
+
+
+class ResourceRoleMatrixEvaluationModel(BaseModel):
+    evaluations: ResourceRoleMatrixEvaluations
+    metric_bounds: dict[str, ResourceRoleMatrixMetricBound]
+    plots: dict[str, dict[str, Any]]
+    heuristic_report: PlotlyHeuristicReportModel
+
 
 class AnalysisFilterModel(BaseModel):
     metric: list[str]
@@ -85,6 +184,9 @@ custom_palette_1 = [
     "#E6CC75",
     "#a7e8de"
 ]
+
+# The matrix's original design uses these five qualitative role colors.
+RESOURCE_ROLE_MATRIX_PALETTE = custom_palette_1[:5]
 
 custom_palette_2 = [
     "#758AE6",
@@ -423,26 +525,43 @@ def resource_roles(df):
 
 def _resource_role_matrix_colorscale(n_roles: int, palette: list[str]) -> list[list]:
     """Piecewise scale for z in 0..n_roles: 0 = empty cell, k>0 = role column color."""
+    from evaluation.evaluate import role_palette
+
     light_gray = "#ededed"
-    if n_roles <= 0:
+    role_colors = role_palette(palette, n_roles)
+    if not role_colors:
         return [[0, light_gray], [1, light_gray]]
 
     scale: list[list] = [[0, light_gray], [0.5 / n_roles, light_gray]]
     for k in range(1, n_roles + 1):
-        color = palette[(k - 1) % len(palette)]
+        color = role_colors[k - 1]
         t_mid = (k - 0.5) / n_roles
         t_end = k / n_roles
         scale.append([t_mid, color])
         scale.append([t_end, color])
     if scale[-1][0] < 1.0:
-        scale.append([1.0, palette[(n_roles - 1) % len(palette)]])
+        scale.append([1.0, role_colors[-1]])
     return scale
 
 
-def resource_role_matrix(df):
+class ResourceRoleMatrixContext(NamedTuple):
+    roles_sorted: list
+    n_roles: int
+    resources_sorted: list
+    n_res: int
+    z: list[list[int]]
+    resources_per_role_counts: dict
+    roles_per_resource_counts: dict
+    total_assignments: int
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    metrics: dict[str, Any]
+    meta: pd.DataFrame
+
+
+def compute_resource_role_matrix_context(df) -> ResourceRoleMatrixContext:
     """
-    Resource×Role assignment matrix (heatmap), Role–Activity edges, and summary metrics
-    for organizational mining style views.
+    Prepare Resource×Role matrix data: assignments, graph elements, and table metadata.
     """
     assignments = df[["Resource", "Role"]].dropna().drop_duplicates()
     roles_sorted = sorted(df["Role"].dropna().unique().tolist())
@@ -542,11 +661,41 @@ def resource_role_matrix(df):
 
     edges = edges_rr + edges_ra
 
-    metrics: dict[str, Any] = {
+    metrics = {
         "total_assignments": total_assignments,
         "resources_per_role": resources_per_role_counts,
         "roles_per_resource": roles_per_resource_counts,
     }
+
+
+    return ResourceRoleMatrixContext(
+        roles_sorted=roles_sorted,
+        n_roles=n_roles,
+        resources_sorted=resources_sorted,
+        n_res=n_res,
+        z=z,
+        resources_per_role_counts=resources_per_role_counts,
+        roles_per_resource_counts=roles_per_resource_counts,
+        total_assignments=total_assignments,
+        nodes=nodes,
+        edges=edges,
+        metrics=metrics,
+        meta=meta,
+    )
+
+
+def build_resource_role_matrix_figure(ctx: ResourceRoleMatrixContext) -> go.Figure:
+    """
+    Build the Plotly figure for the Resource×Role assignment matrix visualization.
+    """
+    roles_sorted = ctx.roles_sorted
+    n_roles = ctx.n_roles
+    resources_sorted = ctx.resources_sorted
+    n_res = ctx.n_res
+    z = ctx.z
+    resources_per_role_counts = ctx.resources_per_role_counts
+    roles_per_resource_counts = ctx.roles_per_resource_counts
+    total_assignments = ctx.total_assignments
 
     # Slightly tighter rows to leave more room for padding around the figure
     row_height_px = 12
@@ -571,7 +720,10 @@ def resource_role_matrix(df):
             ],
         )
     else:
-        palette = custom_palette_1
+        from evaluation.evaluate import role_palette
+
+        palette = RESOURCE_ROLE_MATRIX_PALETTE
+        role_colors = role_palette(palette, n_roles)
         per_role_count = [int(resources_per_role_counts.get(r, 0)) for r in roles_sorted]
         roles_count_per_res = [int(roles_per_resource_counts.get(r, 0)) for r in resources_sorted]
         max_role_count = max(roles_count_per_res) if roles_count_per_res else 1
@@ -631,7 +783,7 @@ def resource_role_matrix(df):
         matrix_col_gap = 0.02
         matrix_col_width = 1.0 - (2 * matrix_col_gap)
         for j, role in enumerate(roles_sorted):
-            role_color = palette[j % len(palette)]
+            role_color = role_colors[j]
             legendgroup = f"role:{role}"
             cell_colors = []
             cell_hover = []
@@ -930,7 +1082,10 @@ def resource_role_matrix(df):
                     {axis_name: {"domain": [float(dom[0]), float(dom[1])]}}
                 )
 
-    plot = fig.to_json()
+    return fig
+
+
+def format_resource_role_matrix_table(meta: pd.DataFrame) -> list[dict]:
     table_df = meta.drop(columns=["roles_key"], errors="ignore").copy()
     if "Roles" in table_df.columns:
         table_df["Roles"] = table_df["Roles"].apply(
@@ -938,14 +1093,183 @@ def resource_role_matrix(df):
             if isinstance(roles, list)
             else roles
         )
-    table_records = table_df.to_dict(orient="records")
+    return table_df.to_dict(orient="records")
 
-    return OutputModel(
-        table=table_records,
-        plot=plot,
-        nodes=nodes,
-        edges=edges,
-        metrics=metrics,
+
+def build_resource_role_mapping(ctx: ResourceRoleMatrixContext) -> list[list[bool]]:
+    """Boolean resource×role grid: mapping[i][j] is True when that assignment exists."""
+    return [
+        [ctx.z[i][j] != 0 for j in range(ctx.n_roles)]
+        for i in range(ctx.n_res)
+    ]
+
+
+def resource_role_matrix_data(ctx: ResourceRoleMatrixContext) -> ResourceRoleMatrixData:
+    mapping = build_resource_role_mapping(ctx)
+    assignments = [
+        {"resource": ctx.resources_sorted[i], "role": ctx.roles_sorted[j]}
+        for i in range(ctx.n_res)
+        for j in range(ctx.n_roles)
+        if mapping[i][j]
+    ]
+    return ResourceRoleMatrixData(
+        resources=ctx.resources_sorted,
+        roles=ctx.roles_sorted,
+        mapping=mapping,
+        z=ctx.z,
+        assignments=assignments,
+        table=format_resource_role_matrix_table(ctx.meta),
+        metrics=ctx.metrics,
+    )
+
+
+def resource_role_matrix(df):
+    """
+    Resource×Role assignment matrix (heatmap), Role–Activity edges, and summary metrics
+    for organizational mining style views.
+    """
+    ctx = compute_resource_role_matrix_context(df)
+    matrix_data = resource_role_matrix_data(ctx)
+    plots = resource_role_ordering_plots(ctx, matrix_data)
+
+    return ResourceRoleMatrixOutputModel(
+        table=matrix_data.table,
+        plot=json.dumps(plots["row_degree"]),
+        plots=plots,
+        nodes=ctx.nodes,
+        edges=ctx.edges,
+        metrics=ctx.metrics,
+    )
+
+
+def evaluate_resource_role_matrix_quality(
+    matrix_data: ResourceRoleMatrixData,
+) -> tuple[ResourceRoleMatrixEvaluations, "MatrixEvaluationResult"]:
+    from evaluation.evaluate import (
+        ORDERING_VARIANT_ROW_DEGREE,
+        evaluate_ordering_variants,
+    )
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    bundle = evaluate_ordering_variants(
+        matrix_model,
+        palette=RESOURCE_ROLE_MATRIX_PALETTE,
+        include_random_baselines=True,
+        random_seed_count=100,
+    )
+    evaluations = ResourceRoleMatrixEvaluations(
+        color_discriminability=ResourceRoleMatrixColorDiscriminability(
+            **bundle.color_discriminability.to_dict()
+        ),
+        orderings={
+            variant: ResourceRoleMatrixQualityEvaluation(
+                **result.ordering_metrics_dict()
+            )
+            for variant, result in bundle.orderings.items()
+        },
+        random_baselines=[
+            ResourceRoleMatrixQualityEvaluation(**result.ordering_metrics_dict())
+            for result in bundle.random_baselines
+        ],
+    )
+    return evaluations, bundle.orderings[ORDERING_VARIANT_ROW_DEGREE]
+
+
+def resource_role_figure_for_matrix(
+    ctx: ResourceRoleMatrixContext, matrix
+) -> go.Figure:
+    """Render an ordering with the same visual encoding as the main matrix."""
+    z = [
+        [column_index + 1 if value else 0 for column_index, value in enumerate(row)]
+        for row in matrix.values.astype(bool).tolist()
+    ]
+    ordered_ctx = ResourceRoleMatrixContext(
+        roles_sorted=matrix.roles,
+        n_roles=len(matrix.roles),
+        resources_sorted=matrix.resources,
+        n_res=len(matrix.resources),
+        z=z,
+        resources_per_role_counts=ctx.resources_per_role_counts,
+        roles_per_resource_counts=ctx.roles_per_resource_counts,
+        total_assignments=ctx.total_assignments,
+        nodes=ctx.nodes,
+        edges=ctx.edges,
+        metrics=ctx.metrics,
+        meta=ctx.meta,
+    )
+    return build_resource_role_matrix_figure(ordered_ctx)
+
+
+def resource_role_ordering_plots(
+    ctx: ResourceRoleMatrixContext,
+    matrix_data: ResourceRoleMatrixData,
+) -> dict[str, dict[str, Any]]:
+    """Return comparable Plotly figures for every supported matrix ordering."""
+    from evaluation.evaluate import build_ordering_variants
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+    from evaluation.ordering import random_ordering
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    plot_matrices = build_ordering_variants(matrix_model)
+    plot_matrices["random_0"] = random_ordering(matrix_model, seed=0)
+
+    return {
+        variant: json.loads(resource_role_figure_for_matrix(ctx, matrix).to_json())
+        for variant, matrix in plot_matrices.items()
+    }
+
+
+def resource_role_matrix_evaluation(df) -> ResourceRoleMatrixEvaluationModel:
+    """Quality metrics, heuristic findings, and comparable ordering plots."""
+    from evaluation.matrix_model import resource_role_matrix_from_mapping
+    from evaluation.plotly_heuristics import evaluate_plotly_figure
+
+    ctx = compute_resource_role_matrix_context(df)
+    matrix_data = resource_role_matrix_data(ctx)
+    evaluations, _ = evaluate_resource_role_matrix_quality(matrix_data)
+
+    matrix_model = resource_role_matrix_from_mapping(
+        resources=matrix_data.resources,
+        roles=matrix_data.roles,
+        mapping=matrix_data.mapping,
+    )
+    plots = resource_role_ordering_plots(ctx, matrix_data)
+    return ResourceRoleMatrixEvaluationModel(
+        evaluations=evaluations,
+        metric_bounds={
+            "row_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "column_coherence": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "degree_order_agreement": ResourceRoleMatrixMetricBound(
+                lower=0.0, upper=1.0, higher_is_better=True
+            ),
+            "row_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0,
+                upper=float((len(matrix_model.roles) + 1) // 2),
+                higher_is_better=False,
+            ),
+            "column_fragmentation": ResourceRoleMatrixMetricBound(
+                lower=0.0,
+                upper=float((len(matrix_model.resources) + 1) // 2),
+                higher_is_better=False,
+            ),
+        },
+        plots=plots,
+        heuristic_report=PlotlyHeuristicReportModel(
+            **evaluate_plotly_figure(plots["row_degree"]).to_dict()
+        ),
     )
 
 
