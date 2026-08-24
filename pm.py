@@ -1430,6 +1430,258 @@ def activity_resource_comparison(df, normalize: bool = False):
         big_plot = fig.to_json()
         return OutputModel(table=prettify_df(normalized_data).replace({np.nan: None}).to_dict(orient="records"), plot=plot, big_plot=big_plot)
 
+def normalized_activity_resource_duration_matrix(df):
+    """
+    Bar-cell matrix for normalized average case duration per Activity x Resource.
+
+    Each activity is normalized independently so colors answer:
+    "Which resources are fastest/normal/slowest for this activity?"
+    """
+    grouped = df.groupby(["Activity", "Resource"])
+    result_rows = []
+
+    for (activity, resource), group_df in grouped:
+        average_duration = group_df.groupby("Case ID")["Duration"].sum().mean()
+        result_rows.append(
+            {
+                "Activity": activity,
+                "Resource": resource,
+                "Average Case Duration": average_duration,
+            }
+        )
+
+    result_df = pd.DataFrame(result_rows)
+    if result_df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title={
+                "text": "Normalized Average Case Duration per Activity and Resource",
+                "x": 0.5,
+                "xanchor": "center",
+            },
+            plot_bgcolor="white",
+            annotations=[
+                {
+                    "text": "No Activity-Resource duration data in the filtered log.",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "x": 0.5,
+                    "y": 0.5,
+                    "showarrow": False,
+                }
+            ],
+        )
+        return OutputModel(table=[], plot=fig.to_json())
+
+    result_df["Average Case Duration (Minutes)"] = (
+        result_df["Average Case Duration"].dt.total_seconds() / 60
+    ).round(2)
+
+    def normalize_activity_duration(activity_minutes: pd.Series):
+        min_duration = activity_minutes.min()
+        max_duration = activity_minutes.max()
+        if min_duration == max_duration:
+            return pd.Series([0.5] * len(activity_minutes), index=activity_minutes.index)
+        return (activity_minutes - min_duration) / (max_duration - min_duration)
+
+    result_df["Normalized Duration"] = result_df.groupby("Activity")[
+        "Average Case Duration (Minutes)"
+    ].transform(normalize_activity_duration)
+
+    def classify_duration(normalized_duration):
+        if normalized_duration == 0:
+            return "Fastest"
+        if normalized_duration == 1:
+            return "Slowest"
+        return "Normal"
+
+    result_df["Duration Class"] = result_df["Normalized Duration"].apply(classify_duration)
+
+    resources_sorted = sorted(result_df["Resource"].dropna().unique().tolist())
+    pivot_norm = result_df.pivot(index="Activity", columns="Resource", values="Normalized Duration")
+    # Reorder activities by their resource-duration signature so similar patterns are near each other.
+    activity_order_df = pivot_norm.reindex(columns=resources_sorted).fillna(0.5)
+    activities_sorted = (
+        activity_order_df.assign(_mean=activity_order_df.mean(axis=1))
+        .sort_values(by=["_mean"] + resources_sorted, ascending=[False] + [True] * len(resources_sorted))
+        .drop(columns=["_mean"])
+        .index.tolist()
+    )
+
+    records_by_pair = {
+        (row["Activity"], row["Resource"]): row
+        for _, row in result_df.iterrows()
+    }
+
+    color_by_class = {
+        "Slowest": "#EF4444",
+        "Normal": "#3B82F6",
+        "Fastest": "#7AC70C",
+        "No data": "#F1F3F5",
+    }
+    bar_y_width = 0.78
+    cell_gap = 0.03
+    cell_width = 1.0 - (2 * cell_gap)
+    label_col = min(
+        0.30,
+        max(0.16, 0.0065 * max((len(str(a)) for a in activities_sorted), default=0)),
+    )
+    matrix_col = 1.0 - label_col
+    row_height_px = 26
+    plot_height = max(520, min(2600, len(activities_sorted) * row_height_px + 260))
+    plot_width = max(1050, int(plot_height * 1.15))
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        column_widths=[label_col, matrix_col],
+        horizontal_spacing=0.004,
+        specs=[[{}, {}]],
+    )
+
+    label_anchor_x = 0.99
+    fig.add_trace(
+        go.Scatter(
+            x=[label_anchor_x] * len(activities_sorted),
+            y=activities_sorted,
+            mode="text",
+            text=activities_sorted,
+            textposition="middle left",
+            textfont=dict(size=10, color="#222222"),
+            cliponaxis=False,
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=1,
+    )
+
+    class_order = ["Slowest", "Normal", "Fastest", "No data"]
+    class_legend_seen = {duration_class: False for duration_class in class_order}
+    for j, resource in enumerate(resources_sorted):
+        cells_by_class = {
+            duration_class: {"activities": [], "hover": []}
+            for duration_class in class_order
+        }
+        for activity in activities_sorted:
+            record = records_by_pair.get((activity, resource))
+            if record is None:
+                duration_class = "No data"
+                hover_text = f"Activity: {activity}<br>Resource: {resource}<br>No data"
+            else:
+                duration_class = record["Duration Class"]
+                duration_minutes = record["Average Case Duration (Minutes)"]
+                normalized_duration = record["Normalized Duration"]
+                hover_text = (
+                    f"Activity: {activity}<br>"
+                    f"Resource: {resource}<br>"
+                    f"Average Case Duration: {duration_minutes:.2f} minutes<br>"
+                    f"Normalized Duration: {normalized_duration:.2f}<br>"
+                    f"Class: {duration_class}"
+                )
+            cells_by_class[duration_class]["activities"].append(activity)
+            cells_by_class[duration_class]["hover"].append(hover_text)
+
+        for duration_class in class_order:
+            class_activities = cells_by_class[duration_class]["activities"]
+            if not class_activities:
+                continue
+
+            should_show_legend = not class_legend_seen[duration_class]
+            class_legend_seen[duration_class] = True
+            fig.add_trace(
+                go.Bar(
+                    x=[cell_width] * len(class_activities),
+                    y=class_activities,
+                    base=[j + cell_gap] * len(class_activities),
+                    orientation="h",
+                    width=bar_y_width,
+                    name=duration_class,
+                    legendgroup=duration_class,
+                    showlegend=should_show_legend,
+                    marker=dict(color=color_by_class[duration_class], line=dict(width=0)),
+                    hovertext=cells_by_class[duration_class]["hover"],
+                    hoverinfo="text",
+                ),
+                row=1,
+                col=2,
+            )
+
+    fig.update_xaxes(
+        visible=False,
+        range=[0, 1],
+        showticklabels=False,
+        automargin=False,
+        autorange=False,
+        fixedrange=True,
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=activities_sorted,
+        autorange="reversed",
+        showticklabels=False,
+        showline=False,
+        showgrid=False,
+        automargin=False,
+        row=1,
+        col=1,
+    )
+    fig.update_xaxes(
+        type="linear",
+        range=[0, len(resources_sorted)],
+        tickmode="array",
+        tickvals=[j + 0.5 for j in range(len(resources_sorted))],
+        ticktext=resources_sorted,
+        tickangle=-90,
+        side="top",
+        showgrid=False,
+        zeroline=False,
+        automargin=True,
+        row=1,
+        col=2,
+    )
+    fig.update_yaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=activities_sorted,
+        autorange="reversed",
+        showticklabels=False,
+        automargin=False,
+        row=1,
+        col=2,
+    )
+
+    fig.update_layout(
+        title={
+            "text": "Normalized Average Case Duration per Activity and Resource",
+            "x": 0.5,
+            "xanchor": "center",
+            "y": 0.97,
+            "yanchor": "top",
+        },
+        width=plot_width,
+        height=plot_height,
+        plot_bgcolor="white",
+        margin=dict(t=150, b=70, l=80, r=180),
+        legend=dict(
+            title=dict(text="Case Duration"),
+            groupclick="togglegroup",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+        ),
+        barmode="overlay",
+    )
+
+    table_df = result_df.drop(columns=["Average Case Duration"])
+    table_df["Normalized Duration"] = table_df["Normalized Duration"].round(2)
+    table_records = prettify_df(table_df).replace({np.nan: None}).to_dict(orient="records")
+    return OutputModel(table=table_records, plot=fig.to_json())
+
 def slowest_resource_per_activity(df):
     # Group by Activity and then Resource
     grouped_activities = df.groupby(['Activity', 'Resource'])

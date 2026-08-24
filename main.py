@@ -69,6 +69,7 @@ from pm import (
     activities_per_role,
     activity_average_duration_with_roles,
     activity_resource_comparison,
+    normalized_activity_resource_duration_matrix,
     slowest_resource_per_activity,
     calculate_working_days,
     capacity_utilization_resource,
@@ -526,6 +527,11 @@ async def read_units(session_id: str = Depends(get_session_id), panel_id: str = 
 async def read_units(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
     df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
     return activity_resource_comparison(df, normalize=True)
+
+@app.get("/normalized_activity_resource_duration_matrix")
+async def read_normalized_activity_resource_duration_matrix(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
+    df = get_dataframe_from_session(session_id, sessions, panel_id=panel_id)
+    return normalized_activity_resource_duration_matrix(df)
 
 @app.get("/slowest_resource")
 async def read_units(session_id: str = Depends(get_session_id), panel_id: str = Query(...)):
